@@ -24,16 +24,17 @@
 */
 var NAVTREE =
 [
-  [ "16x2 easyC LCD Library", "index.html", [
+  [ "Soldered Inputronic BRIDGE Library", "index.html", [
     [ "NAZIV PROIZVODA Arduino library", "index.html", "index" ],
     [ "Classes", "annotated.html", [
       [ "Class List", "annotated.html", "annotated_dup" ],
       [ "Class Index", "classes.html", null ],
-      [ "Class Hierarchy", "hierarchy.html", "hierarchy" ],
       [ "Class Members", "functions.html", [
         [ "All", "functions.html", null ],
         [ "Functions", "functions_func.html", null ],
-        [ "Variables", "functions_vars.html", null ]
+        [ "Variables", "functions_vars.html", null ],
+        [ "Enumerations", "functions_enum.html", null ],
+        [ "Enumerator", "functions_eval.html", null ]
       ] ]
     ] ],
     [ "Files", "files.html", [
@@ -44,7 +45,7 @@ var NAVTREE =
 
 var NAVTREEINDEX =
 [
-"_generic-easy_c-_s_o_l_d_e_r_e_d_8cpp.html"
+"_inputronic-_b_r_i_d_g_e_8cpp.html"
 ];
 
 var SYNCONMSG = 'click to disable panel synchronization';

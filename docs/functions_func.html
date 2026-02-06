@@ -5,7 +5,7 @@
 <meta http-equiv="X-UA-Compatible" content="IE=11"/>
 <meta name="generator" content="Doxygen 1.13.2"/>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
-<title>16x2 easyC LCD Library: Class Members - Functions</title>
+<title>Soldered Inputronic BRIDGE Library: Class Members - Functions</title>
 <link href="tabs.css" rel="stylesheet" type="text/css"/>
 <script type="text/javascript" src="jquery.js"></script>
 <script type="text/javascript" src="dynsections.js"></script>
@@ -30,9 +30,9 @@
  <tr id="projectrow">
   <td id="projectlogo"><img alt="Logo" src="logo.png"/></td>
   <td id="projectalign">
-   <div id="projectname">16x2 easyC LCD Library<span id="projectnumber">&#160;1.0.0</span>
+   <div id="projectname">Soldered Inputronic BRIDGE Library<span id="projectnumber">&#160;1.0.0</span>
    </div>
-   <div id="projectbrief">This is a library for the 16x2 easyC LCD Module</div>
+   <div id="projectbrief">Inputronic BRIDGE parser and communication helper for UART, I2C, and SPI.</div>
   </td>
  </tr>
  </tbody>
@@ -101,14 +101,24 @@ $(function(){initNavTree('functions_func.html',''); initResizable(true); });
 
 <div class="contents">
 <div class="textblock">Here is a list of all functions with links to the classes they belong to:</div><ul>
-<li>begin()&#160;:&#160;<a class="el" href="class_easy_c.html#a1b5a82b8a59daea79de76e496457e176">EasyC</a></li>
-<li>EasyC()&#160;:&#160;<a class="el" href="class_easy_c.html#a2ea672a225a32eab52c2b20733fd26bd">EasyC</a></li>
-<li>initializeNative()&#160;:&#160;<a class="el" href="class_easy_c.html#a48c8aa55d48ef0cc11047cab0735c998">EasyC</a>, <a class="el" href="class_sensor.html#adb537c76173019fddf84b2d89e6c6559">Sensor</a></li>
-<li>readData()&#160;:&#160;<a class="el" href="class_easy_c.html#a9a3d39be50b348768bc4b5dea3dae01a">EasyC</a></li>
-<li>readRegister()&#160;:&#160;<a class="el" href="class_easy_c.html#a45bd6c915c1fa0998e273f69ee2d2376">EasyC</a></li>
-<li>sendAddress()&#160;:&#160;<a class="el" href="class_easy_c.html#a10aa7df19e8c7bf12cd720b662f317a3">EasyC</a></li>
-<li>sendData()&#160;:&#160;<a class="el" href="class_easy_c.html#afe8aa014ae53cad3b0f3c42f59277195">EasyC</a></li>
-<li>Sensor()&#160;:&#160;<a class="el" href="class_sensor.html#a2b8ea6b15267f6fa0e263f57a09f6b62">Sensor</a></li>
+<li>begin()&#160;:&#160;<a class="el" href="class_inputronic_parser.html#a825ff209098531f88ef82aa843db223c">InputronicParser</a></li>
+<li>configureI2c()&#160;:&#160;<a class="el" href="class_inputronic_parser.html#abde182205e03c4eca45462ea90e4c9db">InputronicParser</a></li>
+<li>configureInterrupt()&#160;:&#160;<a class="el" href="class_inputronic_parser.html#a6b5d9f886c595b5a011707c6802c2ca5">InputronicParser</a></li>
+<li>feedLine()&#160;:&#160;<a class="el" href="class_inputronic_parser.html#aa4c4632add4709b27cedfd39099f570e">InputronicParser</a></li>
+<li>parseDescriptor()&#160;:&#160;<a class="el" href="class_inputronic_parser.html#aa9c0b0d701a9aa943160a36a80aafdbb">InputronicParser</a></li>
+<li>parseHidRaw()&#160;:&#160;<a class="el" href="class_inputronic_parser.html#ab0ac00d6ccab1174fe6398e1522effdb">InputronicParser</a></li>
+<li>parseKeyboard()&#160;:&#160;<a class="el" href="class_inputronic_parser.html#a5bb80b45ab8ec854c90e1d32d20e38fc">InputronicParser</a></li>
+<li>parseMessage()&#160;:&#160;<a class="el" href="class_inputronic_parser.html#a1499764ae1ff47be560759959c4ec5da">InputronicParser</a></li>
+<li>parseMIDI()&#160;:&#160;<a class="el" href="class_inputronic_parser.html#aedca5ec9097ef0e79c8a8494822712b3">InputronicParser</a></li>
+<li>parseMouse()&#160;:&#160;<a class="el" href="class_inputronic_parser.html#ab0011752e2f63a94d08d9619dd198231">InputronicParser</a></li>
+<li>pollEvents()&#160;:&#160;<a class="el" href="class_inputronic_parser.html#aa98cf86960a89c8490d6a0ab7e682d98">InputronicParser</a></li>
+<li>pollSpi()&#160;:&#160;<a class="el" href="class_inputronic_parser.html#aa14fe0de30565695a51c9bbfeb4104d7">InputronicParser</a></li>
+<li>requestDescriptor()&#160;:&#160;<a class="el" href="class_inputronic_parser.html#a06d6f10684017a81ad0dacc4c78ddf4f">InputronicParser</a></li>
+<li>requestHidRawOnce()&#160;:&#160;<a class="el" href="class_inputronic_parser.html#ac67b22f778d96f03a3d37781c789c0a5">InputronicParser</a></li>
+<li>sendI2cCommand()&#160;:&#160;<a class="el" href="class_inputronic_parser.html#a27c30c3d73c076c6c87fbd416ae18c73">InputronicParser</a></li>
+<li>sendSpiCommand()&#160;:&#160;<a class="el" href="class_inputronic_parser.html#aab162fe45891250575b0cbfa5b2d15e2">InputronicParser</a></li>
+<li>setHidRawPolling()&#160;:&#160;<a class="el" href="class_inputronic_parser.html#abb608faea03df7c5f1efecee0bc0c447">InputronicParser</a></li>
+<li>setInterruptMode()&#160;:&#160;<a class="el" href="class_inputronic_parser.html#abe96f06fa4e4342218eb5a38faca8b27">InputronicParser</a></li>
 </ul>
 </div><!-- contents -->
 </div><!-- doc-content -->
@@ -117,7 +127,7 @@ $(function(){initNavTree('functions_func.html',''); initResizable(true); });
     <!-- id is needed for treeview function! -->
     <ul>
         <li class="footer">
-            Generated on Fri Feb 6 2026 10:51:08 for 16x2 easyC LCD Library by <a href="http://www.doxygen.org/index.html">
+            Generated on Fri Feb 6 2026 11:30:06 for Soldered Inputronic BRIDGE Library by <a href="http://www.doxygen.org/index.html">
                 <img class="footer" src="doxygen.png" alt="doxygen"
                     onerror="this.onerror=null;this.src='doxygen.svg';" /></a> 1.13.2.
             Dark theme by <a href="http://majerle.eu" target="_new">Tilen Majerle</a>. All rights reserved.

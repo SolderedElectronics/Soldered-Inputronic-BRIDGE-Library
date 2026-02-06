@@ -1,4 +1,4 @@
 var searchData=
 [
-  ['sensor_0',['Sensor',['../class_sensor.html',1,'']]]
+  ['eventbundle_0',['EventBundle',['../struct_inputronic_parser_1_1_event_bundle.html',1,'InputronicParser']]]
 ];
