@@ -16,37 +16,49 @@
 #include <SPI.h>
 #include <Wire.h>
 
-class InputronicParser {
-public:
-    enum CommProtocol { PROTOCOL_UART, PROTOCOL_I2C, PROTOCOL_SPI };
+class InputronicParser
+{
+  public:
+    enum CommProtocol
+    {
+        PROTOCOL_UART,
+        PROTOCOL_I2C,
+        PROTOCOL_SPI
+    };
 
-    struct KeyboardEvent {
+    struct KeyboardEvent
+    {
         String payload;
         char key = 0;
         String keys[8];
         uint8_t keyCount = 0;
         bool valid = false;
     };
-    struct MouseEvent {
+    struct MouseEvent
+    {
         int16_t x = 0, y = 0;
         int8_t scroll = 0;
         bool btnLeft = 0, btnRight = 0, btnMiddle = 0, btnBackward = 0, btnForward = 0;
         bool valid = false;
     };
-    struct MIDIEvent {
+    struct MIDIEvent
+    {
         uint8_t b1 = 0, b2 = 0, b3 = 0;
         bool valid = false;
     };
-    struct DescriptorEvent {
+    struct DescriptorEvent
+    {
         String hex;
         bool valid = false;
     };
-    struct HidRawEvent {
+    struct HidRawEvent
+    {
         String hex;
         bool valid = false;
     };
 
-    struct EventBundle {
+    struct EventBundle
+    {
         KeyboardEvent keyboard;
         MouseEvent mouse;
         MIDIEvent midi;
@@ -54,10 +66,9 @@ public:
         HidRawEvent hidRaw;
     };
 
-    void begin(CommProtocol p, uint8_t spiCs = 10, uint32_t spiHz = 1000000,
-               bool enableInterruptParam = false, int8_t interruptPinParam = -1, bool activeHigh = true);
-    void begin(CommProtocol p, uint8_t spiCs, uint32_t spiHz,
-               int8_t spiSck, int8_t spiMiso, int8_t spiMosi,
+    void begin(CommProtocol p, uint8_t spiCs = 10, uint32_t spiHz = 1000000, bool enableInterruptParam = false,
+               int8_t interruptPinParam = -1, bool activeHigh = true);
+    void begin(CommProtocol p, uint8_t spiCs, uint32_t spiHz, int8_t spiSck, int8_t spiMiso, int8_t spiMosi,
                bool enableInterruptParam = false, int8_t interruptPinParam = -1, bool activeHigh = true);
 
     void configureI2c(uint8_t addr, int8_t sda = -1, int8_t scl = -1, uint32_t clock = 100000);
@@ -68,7 +79,7 @@ public:
     void feedLine(const String &line);
     EventBundle pollEvents();
 
-private:
+  private:
     CommProtocol protocol;
     String inputBuffer;
     EventBundle latest;
