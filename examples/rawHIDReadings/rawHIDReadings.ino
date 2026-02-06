@@ -1,7 +1,7 @@
 /**
  **************************************************
  *
- * @file        rawGHIDReadings.ino
+ * @file        rawHIDReadings.ino
  * @brief       Example showing how to read raw HID reports.
  *
  *

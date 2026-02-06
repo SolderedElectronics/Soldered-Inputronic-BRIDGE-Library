@@ -6,7 +6,7 @@
  *
  *
  * @copyright GNU General Public License v3.0
- * @authors     @ soldered.com
+ * @authors   Josip Šimun Kuči @ soldered.com
  ***************************************************/
 
 #include "Inputronic-BRIDGE.h"
