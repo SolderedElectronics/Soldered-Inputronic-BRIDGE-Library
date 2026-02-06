@@ -47,5 +47,5 @@ var NAVTREEINDEX =
 "_generic-easy_c-_s_o_l_d_e_r_e_d_8cpp.html"
 ];
 
-var SYNCONMSG = 'click to disable panel synchronisation';
-var SYNCOFFMSG = 'click to enable panel synchronisation';
+var SYNCONMSG = 'click to disable panel synchronization';
+var SYNCOFFMSG = 'click to enable panel synchronization';
