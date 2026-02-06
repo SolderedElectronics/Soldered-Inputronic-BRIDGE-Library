@@ -1,17 +1,36 @@
 ##################################################
-# Syntax Coloring Map For Obstacle-Sensor-SOLDERED
+# Syntax Coloring Map For Inputronic-BRIDGE
 ##################################################
 
 ##################################################
 # Datatypes (KEYWORD1)
 ##################################################
 
+InputronicParser	KEYWORD1
+InputronicParser::KeyboardEvent	KEYWORD1
+InputronicParser::MouseEvent	KEYWORD1
+InputronicParser::MIDIEvent	KEYWORD1
+InputronicParser::DescriptorEvent	KEYWORD1
+InputronicParser::HidRawEvent	KEYWORD1
+InputronicParser::EventBundle	KEYWORD1
+
 ##################################################
 # Methods and Functions (KEYWORD2)
 ##################################################
 
 begin	KEYWORD2
+configureI2c	KEYWORD2
+requestDescriptor	KEYWORD2
+requestHidRawOnce	KEYWORD2
+setHidRawPolling	KEYWORD2
+setInterruptMode	KEYWORD2
+feedLine	KEYWORD2
+pollEvents	KEYWORD2
 
 ##################################################
 # Constants (LITERAL1)
 ##################################################
+
+PROTOCOL_UART	LITERAL1
+PROTOCOL_I2C	LITERAL1
+PROTOCOL_SPI	LITERAL1
