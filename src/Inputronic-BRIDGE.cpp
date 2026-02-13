@@ -11,6 +11,44 @@
 
 #include "Inputronic-BRIDGE.h"
 
+volatile bool InputronicParser::interruptFlag = false;
+void (*InputronicParser::userIsrCallback)() = nullptr;
+
+/**
+ * @brief                   Enable interrupt-driven event polling.
+ */
+void InputronicParser::enableInterruptPin(int8_t pin)
+{
+    if (pin < 0)
+    {
+        return;
+    }
+    interruptPin = pin;
+    enableInterrupt = true;
+    pinMode(interruptPin, INPUT_PULLUP);
+    attachInterrupt(digitalPinToInterrupt(interruptPin), isrHandler, FALLING);
+}
+
+/**
+ * @brief                   Register a user callback for interrupt events.
+ */
+void InputronicParser::onDataReady(void (*callback)())
+{
+    userIsrCallback = callback;
+}
+
+/**
+ * @brief                   ISR handler for interrupt pin.
+ */
+void IRAM_ATTR InputronicParser::isrHandler()
+{
+    interruptFlag = true;
+    if (userIsrCallback != nullptr)
+    {
+        userIsrCallback();
+    }
+}
+
 /**
  * @brief                   Initialize communication mode (UART, I2C or SPI).
  */
@@ -127,6 +165,22 @@ InputronicParser::EventBundle InputronicParser::pollEvents()
 {
     if (protocol == PROTOCOL_UART)
     {
+        if (enableInterrupt && !interruptFlag)
+        {
+            EventBundle out = latest;
+            latest.keyboard.valid = false;
+            latest.mouse.valid = false;
+            latest.midi.valid = false;
+            latest.descriptor.valid = false;
+            latest.hidRaw.valid = false;
+            return out;
+        }
+
+        if (enableInterrupt && interruptFlag)
+        {
+            interruptFlag = false;
+        }
+
         static String uartBuffer = "";
 
         while (Serial1.available())
@@ -147,7 +201,7 @@ InputronicParser::EventBundle InputronicParser::pollEvents()
     {
         const uint8_t MAX_LEN = 128;
 
-        if (enableInterrupt && !requestDescPending && !requestHidRawPending)
+        if (enableInterrupt && !interruptFlag && !requestDescPending && !requestHidRawPending)
         {
             EventBundle out = latest;
             latest.keyboard.valid = false;
@@ -156,6 +210,11 @@ InputronicParser::EventBundle InputronicParser::pollEvents()
             latest.descriptor.valid = false;
             latest.hidRaw.valid = false;
             return out;
+        }
+
+        if (enableInterrupt && interruptFlag)
+        {
+            interruptFlag = false;
         }
 
         if (!i2cInitialized)
@@ -187,45 +246,60 @@ InputronicParser::EventBundle InputronicParser::pollEvents()
 
         Wire.requestFrom(i2cSlaveAddr, (uint8_t)MAX_LEN);
 
-        if (Wire.available())
+        // Read ALL raw bytes from this I2C transaction, keeping only
+        // printable ASCII (the TS;...;TE frame characters).  Length
+        // prefix bytes and zero-padding are silently skipped.
+        static String i2cBuffer = "";
+        bool gotData = false;
+
+        while (Wire.available())
         {
-            uint8_t payloadLen = Wire.read();
-            if (payloadLen > 0 && payloadLen < MAX_LEN)
+            uint8_t b = Wire.read();
+            if (b >= 0x20 && b <= 0x7E)
             {
-                String msg = "";
-                while (Wire.available() && msg.length() < payloadLen)
-                {
-                    msg += (char)Wire.read();
-                }
-
-                static String i2cBuffer = "";
-                if (msg.length() == payloadLen)
-                {
-                    i2cBuffer += msg;
-                }
-                if (i2cBuffer.length() > 256)
-                {
-                    i2cBuffer = "";
-                }
-
-                int tePos;
-                while ((tePos = i2cBuffer.indexOf(";TE")) != -1)
-                {
-                    String fullMsg = i2cBuffer.substring(0, tePos + 3);
-                    feedLine(fullMsg);
-                    i2cBuffer.remove(0, tePos + 3);
-                    i2cBuffer.trim();
-                }
-
-                Wire.beginTransmission(i2cSlaveAddr);
-                Wire.write((const uint8_t *)"ACK", 3);
-                Wire.endTransmission();
+                i2cBuffer += (char)b;
+                gotData = true;
             }
+        }
+
+        if (i2cBuffer.length() > 512)
+        {
+            int lastTs = i2cBuffer.lastIndexOf("TS;");
+            if (lastTs >= 0)
+            {
+                i2cBuffer = i2cBuffer.substring(lastTs);
+            }
+            else
+            {
+                i2cBuffer = "";
+            }
+        }
+
+        int tePos;
+        while ((tePos = i2cBuffer.indexOf(";TE")) != -1)
+        {
+            int tsPos = i2cBuffer.indexOf("TS;");
+            if (tsPos < 0 || tsPos > tePos)
+            {
+                i2cBuffer.remove(0, tePos + 3);
+                continue;
+            }
+            String fullMsg = i2cBuffer.substring(tsPos, tePos + 3);
+            feedLine(fullMsg);
+            i2cBuffer.remove(0, tePos + 3);
+            i2cBuffer.trim();
+        }
+
+        if (gotData)
+        {
+            Wire.beginTransmission(i2cSlaveAddr);
+            Wire.write((const uint8_t *)"ACK", 3);
+            Wire.endTransmission();
         }
     }
     else if (protocol == PROTOCOL_SPI)
     {
-        if (enableInterrupt && !requestDescPending && !requestHidRawPending)
+        if (enableInterrupt && !interruptFlag && !requestDescPending && !requestHidRawPending)
         {
             EventBundle out = latest;
             latest.keyboard.valid = false;
@@ -235,6 +309,16 @@ InputronicParser::EventBundle InputronicParser::pollEvents()
             latest.hidRaw.valid = false;
             return out;
         }
+
+        if (enableInterrupt && interruptFlag)
+        {
+            interruptFlag = false;
+            // Wait for the SPI slave to enter its blocking receive after
+            // pulsing the interrupt pin.  The firmware needs ~25 us
+            // (20 us pulse + a few us to call spi_slave_transmit).
+            delayMicroseconds(50);
+        }
+
         if (!enableInterrupt)
         {
             if (requestDescPending)

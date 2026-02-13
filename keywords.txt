@@ -24,6 +24,8 @@ requestDescriptor	KEYWORD2
 requestHidRawOnce	KEYWORD2
 setHidRawPolling	KEYWORD2
 setInterruptMode	KEYWORD2
+enableInterruptPin	KEYWORD2
+onDataReady	KEYWORD2
 feedLine	KEYWORD2
 pollEvents	KEYWORD2
 
