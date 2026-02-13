@@ -15,7 +15,10 @@ var class_inputronic_parser =
     [ "begin", "class_inputronic_parser.html#a825ff209098531f88ef82aa843db223c", null ],
     [ "configureI2c", "class_inputronic_parser.html#abde182205e03c4eca45462ea90e4c9db", null ],
     [ "configureInterrupt", "class_inputronic_parser.html#a6b5d9f886c595b5a011707c6802c2ca5", null ],
+    [ "enableInterruptPin", "class_inputronic_parser.html#a5af767a8104dbfcadc29d7c85a6d8621", null ],
     [ "feedLine", "class_inputronic_parser.html#aa4c4632add4709b27cedfd39099f570e", null ],
+    [ "isrHandler", "class_inputronic_parser.html#aeaed34253e2abe5c6601de1a0616f6ee", null ],
+    [ "onDataReady", "class_inputronic_parser.html#aa296a925a2590c5244904fb8a082159e", null ],
     [ "parseDescriptor", "class_inputronic_parser.html#aa9c0b0d701a9aa943160a36a80aafdbb", null ],
     [ "parseHidRaw", "class_inputronic_parser.html#ab0ac00d6ccab1174fe6398e1522effdb", null ],
     [ "parseKeyboard", "class_inputronic_parser.html#a5bb80b45ab8ec854c90e1d32d20e38fc", null ],
@@ -38,6 +41,8 @@ var class_inputronic_parser =
     [ "i2cSdaPin", "class_inputronic_parser.html#adb2d8fc68033584bf11cf6d1f4fd3499", null ],
     [ "i2cSlaveAddr", "class_inputronic_parser.html#ac46c20bf48e9539d0d878e22362f9f59", null ],
     [ "inputBuffer", "class_inputronic_parser.html#ae8477b64b3aab6f83c1bddd45635be10", null ],
+    [ "interruptFlag", "class_inputronic_parser.html#ad54caf3fb6a8f3dd2e52fc94d293b678", null ],
+    [ "interruptPin", "class_inputronic_parser.html#a3b35fa52810c40e87fca2696420682fc", null ],
     [ "lastHidRawHex", "class_inputronic_parser.html#a770bb553a4dd4534734b7ba49bbb43ca", null ],
     [ "latest", "class_inputronic_parser.html#a67eb37fd6f969c0f80370f3c6cd6c211", null ],
     [ "pollHidRawEnabled", "class_inputronic_parser.html#a8ebba37ab1d7ceb5b400cc831e1791ab", null ],
@@ -53,5 +58,6 @@ var class_inputronic_parser =
     [ "spiPendingAck", "class_inputronic_parser.html#a72e77b00e57921fe1ae5be68ab4efa82", null ],
     [ "spiPendingCommand", "class_inputronic_parser.html#a394eaa8d00e3b006577bc38e9f750bb0", null ],
     [ "spiSckPin", "class_inputronic_parser.html#aa042ddb5d4f8df2f0b954b569023a4de", null ],
-    [ "spiSettings", "class_inputronic_parser.html#ab6a17d3f02f96209a5e8eac4f0f04648", null ]
+    [ "spiSettings", "class_inputronic_parser.html#ab6a17d3f02f96209a5e8eac4f0f04648", null ],
+    [ "userIsrCallback", "class_inputronic_parser.html#a8c68a24440da5be78b909f79f59691af", null ]
 ];
