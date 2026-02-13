@@ -10,6 +10,8 @@ void InputronicBridge::sendMidiReport(uint8_t b1, uint8_t b2, uint8_t b3) {
   } else if (currentProtocol == protocolSpi) {
     lastSpiMsg = buf;
     spiMsgPending = true;
+  } else if (currentProtocol == protocolUart) {
+    pulseInterruptPin();
   }
 }
 

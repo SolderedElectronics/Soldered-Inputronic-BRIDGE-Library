@@ -111,6 +111,7 @@ void InputronicBridge::sendKeyboardReport() {
 
 void InputronicBridge::sendKeyboardUart() {
   Serial.print("TS;K;" + latestReports.keyboard.payload + ";TE\n");
+  pulseInterruptPin();
 }
 
 void InputronicBridge::sendKeyboardI2c() {

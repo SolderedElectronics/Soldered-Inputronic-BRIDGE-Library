@@ -40,6 +40,7 @@ void InputronicBridge::sendMouseUart() {
                latestReports.mouse.btnBackward + ";" +
                latestReports.mouse.btnForward + ";TE\n";
   Serial.print(msg);
+  pulseInterruptPin();
 }
 
 void InputronicBridge::sendMouseI2c() {

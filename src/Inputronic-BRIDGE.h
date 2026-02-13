@@ -76,6 +76,8 @@ class InputronicParser
     void requestHidRawOnce();
     void setHidRawPolling(bool enabled);
     void setInterruptMode(bool enable, int8_t pin = -1, bool activeHigh = true);
+    void enableInterruptPin(int8_t pin);
+    void onDataReady(void (*callback)());
     void feedLine(const String &line);
     EventBundle pollEvents();
 
@@ -104,11 +106,15 @@ class InputronicParser
     String lastHidRawHex;
     bool enableInterrupt = false;
     bool expectingHidRawOnly = false;
+    int8_t interruptPin = -1;
+    static volatile bool interruptFlag;
+    static void (*userIsrCallback)();
 
     void pollSpi();
     void sendSpiCommand(const char *command);
     void sendI2cCommand(const char *command);
     void configureInterrupt(bool enable, int8_t pin, bool activeHigh);
+    static void IRAM_ATTR isrHandler();
     void parseMessage(const String &msgIn);
     void parseKeyboard(const String &msg);
     void parseMIDI(const String &msgIn);

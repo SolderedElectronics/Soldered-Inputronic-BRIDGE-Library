@@ -21,6 +21,8 @@ void InputronicBridge::begin() {
   } else if (currentProtocol == protocolSpi && !spiInitialized) {
     initSpiSlave();
   }
+
+  initInterruptPin();
 }
 
 void InputronicBridge::setProtocol(CommProtocol protocol) {
@@ -30,6 +32,8 @@ void InputronicBridge::setProtocol(CommProtocol protocol) {
   } else if (currentProtocol == protocolSpi && !spiInitialized) {
     initSpiSlave();
   }
+
+  initInterruptPin();
 }
 
 void InputronicBridge::task() {
@@ -188,6 +192,45 @@ void InputronicBridge::initSpiSlave() {
   }
 }
 
+void InputronicBridge::initInterruptPin() {
+  gpio_num_t pin = GPIO_NUM_NC;
+
+  if (currentProtocol == protocolI2c) {
+    pin = interruptPinI2c;
+  } else if (currentProtocol == protocolSpi || currentProtocol == protocolUart) {
+    pin = interruptPinSpiUart;
+  }
+
+  if (pin != GPIO_NUM_NC && pin != currentInterruptPin) {
+    if (interruptPinInitialized && currentInterruptPin != GPIO_NUM_NC) {
+      gpio_reset_pin(currentInterruptPin);
+    }
+
+    gpio_config_t io_conf = {};
+    io_conf.intr_type = GPIO_INTR_DISABLE;
+    io_conf.mode = GPIO_MODE_OUTPUT;
+    io_conf.pin_bit_mask = (1ULL << pin);
+    io_conf.pull_down_en = GPIO_PULLDOWN_DISABLE;
+    io_conf.pull_up_en = GPIO_PULLUP_DISABLE;
+    gpio_config(&io_conf);
+
+    gpio_set_level(pin, 1);
+
+    currentInterruptPin = pin;
+    interruptPinInitialized = true;
+  }
+}
+
+void InputronicBridge::pulseInterruptPin() {
+  if (!interruptPinInitialized || currentInterruptPin == GPIO_NUM_NC) {
+    return;
+  }
+
+  gpio_set_level(currentInterruptPin, 0);
+  delayMicroseconds(20);
+  gpio_set_level(currentInterruptPin, 1);
+}
+
 void InputronicBridge::handleI2cTransaction() {
   uint8_t rxBuf[i2cBufLen] = {0};
 
@@ -242,16 +285,12 @@ void InputronicBridge::handleI2cTransaction() {
   txBuf[0] = len;
   memcpy(&txBuf[1], lastI2cMsg.c_str(), len);
 
-  esp_err_t err = i2c_slave_write_buffer(i2cPort, txBuf, len + 1, 0);
-  if (err == ESP_OK) {
+  int written = i2c_slave_write_buffer(i2cPort, txBuf, len + 1, 0);
+  if (written > 0) {
     i2cMsgSent = true;
-  } else if (err == ESP_FAIL && i2cMsgSent) {
-    // If master already read the data, treat as sent
-    i2cMsgSent = true;
-  } else if (err != ESP_ERR_TIMEOUT) {
-    lastI2cMsg.clear();
-    i2cMsgPending = false;
-    i2cMsgSent = false;
+    pulseInterruptPin();
+  } else {
+    // Buffer full or write failed — leave pending for next attempt
   }
 }
 
@@ -281,6 +320,15 @@ void InputronicBridge::handleSpiTransaction() {
   if (!spiInitialized) {
     return;
   }
+
+  // In interrupt mode, skip idle transactions to prevent stale empty
+  // transfers from sitting in the SPI hardware queue.  Without this,
+  // the master's next transfer after an interrupt serves the old empty
+  // transaction instead of the new one carrying data ("trailing by one").
+  if (interruptPinInitialized && !spiMsgPending) {
+    return;
+  }
+
   memset(spiRxBuf, 0, spiBufLen);
   memset(spiTxBuf, 0, spiBufLen);
 
@@ -299,6 +347,13 @@ void InputronicBridge::handleSpiTransaction() {
   t.length = spiBufLen * 8;
   t.rx_buffer = spiRxBuf;
   t.tx_buffer = spiTxBuf;
+
+  // Pulse interrupt before blocking so master knows to initiate a transfer.
+  // The slave enters spi_slave_transmit within microseconds of the pulse,
+  // well before the master can respond.
+  if (sentThisTransaction) {
+    pulseInterruptPin();
+  }
 
   esp_err_t err = spi_slave_transmit(spiHost, &t, pdMS_TO_TICKS(10));
   if (err == ESP_ERR_TIMEOUT) {

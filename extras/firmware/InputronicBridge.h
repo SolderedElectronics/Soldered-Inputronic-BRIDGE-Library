@@ -137,11 +137,15 @@ private:
   static constexpr gpio_num_t spiMosi = GPIO_NUM_11;
   static constexpr int spiBufLen = 128;
   static constexpr spi_host_device_t spiHost = SPI2_HOST;
+  static constexpr gpio_num_t interruptPinI2c = GPIO_NUM_12;
+  static constexpr gpio_num_t interruptPinSpiUart = GPIO_NUM_9;
 
   CommProtocol currentProtocol = protocolI2c;
   bool i2cInitialized = false;
   bool spiInitialized = false;
   uint32_t lastI2cWriteMs = 0;
+  gpio_num_t currentInterruptPin = GPIO_NUM_NC;
+  bool interruptPinInitialized = false;
 
   struct KeyboardReport {
     String payload;
@@ -186,6 +190,8 @@ private:
 
   void initI2cSlave();
   void initSpiSlave();
+  void initInterruptPin();
+  void pulseInterruptPin();
   void handleI2cTransaction();
   void handleSpiTransaction();
   static String extractSpiCommand(const uint8_t *buf, size_t len);
