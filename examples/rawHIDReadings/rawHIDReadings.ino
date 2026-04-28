@@ -9,45 +9,55 @@
  * @authors     Josip Šimun Kuči @ soldered.com
  ***************************************************/
 
-#include <Wire.h>
 #include "Inputronic-BRIDGE.h"
 
-// Parser instance used for all communication protocols.
 InputronicParser parser;
 
 void setup()
 {
-    // USB serial for monitoring raw HID output.
     Serial.begin(115200);
 
-    // Uncomment the protocol you want to use:
-    // - UART uses Serial1.
-    // - I2C uses Wire (handled internally by the parser).
-    // - SPI uses the default SPI bus.
+    // --- Protocol selection ---
+    // Uncomment ONE block depending on which protocol you wired up.
 
-    // UART settings (TX/RX pins depend on your board):
+    // ---- I2C ----
+    // Call Wire.begin() with your SDA/SCL pins, then pass Wire to begin().
+    Wire.begin(21, 22);
+    parser.configureI2c(0x50);
+    if (!parser.begin(InputronicParser::PROTOCOL_I2C, Wire))
+    {
+        Serial.println("Could not connect to BRIDGE over I2C!");
+        while (true);
+    }
+
+    // ---- UART ----
     //Serial1.begin(115200, SERIAL_8N1, 14, 15);
-    //parser.begin(InputronicParser::PROTOCOL_UART);
+    //if (!parser.begin(InputronicParser::PROTOCOL_UART, Serial1))
+    //{
+    //    Serial.println("Could not connect to BRIDGE over UART!");
+    //    while (true);
+    //}
 
-    // I2C settings (device address and optional SDA/SCL pins):
-    parser.configureI2c(0x50, 21, 22);
-    parser.begin(InputronicParser::PROTOCOL_I2C);
+    // ---- SPI ----
+    //SPI.begin();
+    //if (!parser.begin(InputronicParser::PROTOCOL_SPI, SPI, 5))
+    //{
+    //    Serial.println("Could not connect to BRIDGE over SPI!");
+    //    while (true);
+    //}
 
-    // SPI settings (CS pin example):
-    //parser.begin(InputronicParser::PROTOCOL_SPI, 5);
+    Serial.println("BRIDGE connected.");
 
-    // Request raw HID on every poll.
+    // Push raw HID bytes on every poll.
     parser.setHidRawPolling(true);
 }
 
 void loop()
 {
-    // Polling reads incoming data and returns any newly parsed events.
     auto events = parser.pollEvents();
 
     if (events.hidRaw.valid)
     {
-        // HID RAW is a hex string representing the report bytes.
         Serial.print("HID RAW HEX: ");
         Serial.println(events.hidRaw.hex);
     }
