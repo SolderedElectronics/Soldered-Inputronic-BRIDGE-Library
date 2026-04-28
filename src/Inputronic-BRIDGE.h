@@ -85,8 +85,8 @@ class InputronicParser
      * @return true  Bridge responded to PING.
      * @return false No response within timeout (bridge not connected or not ready).
      */
-    bool begin(CommProtocol p, TwoWire &wire,
-               bool enableInterruptParam = false, int8_t interruptPinParam = -1, bool activeHigh = true);
+    bool begin(CommProtocol p, TwoWire &wire, bool enableInterruptParam = false, int8_t interruptPinParam = -1,
+               bool activeHigh = true);
 
     /**
      * @brief Initialise SPI mode and verify the bridge is present.
@@ -117,8 +117,8 @@ class InputronicParser
      * @return true  Bridge responded to PING within 500 ms.
      * @return false No response (bridge not connected or no USB device attached yet).
      */
-    bool begin(CommProtocol p, HardwareSerial &serial,
-               bool enableInterruptParam = false, int8_t interruptPinParam = -1, bool activeHigh = true);
+    bool begin(CommProtocol p, HardwareSerial &serial, bool enableInterruptParam = false, int8_t interruptPinParam = -1,
+               bool activeHigh = true);
 
     void requestDescriptor();
     void requestHidRawOnce();
