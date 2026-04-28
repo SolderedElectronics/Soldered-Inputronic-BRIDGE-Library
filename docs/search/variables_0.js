@@ -7,5 +7,6 @@ var searchData=
   ['btnforward_4',['btnForward',['../struct_inputronic_parser_1_1_mouse_event.html#a8b74f6669f95a0c8007fa467dddf6be4',1,'InputronicParser::MouseEvent']]],
   ['btnleft_5',['btnLeft',['../struct_inputronic_parser_1_1_mouse_event.html#a63ea73de4489b06b576eeed37ca90d52',1,'InputronicParser::MouseEvent']]],
   ['btnmiddle_6',['btnMiddle',['../struct_inputronic_parser_1_1_mouse_event.html#a5ca09820355e768ec6e6ca74ef06a07d',1,'InputronicParser::MouseEvent']]],
-  ['btnright_7',['btnRight',['../struct_inputronic_parser_1_1_mouse_event.html#af75fb305147f85b3bb156755c7bde035',1,'InputronicParser::MouseEvent']]]
+  ['btnright_7',['btnRight',['../struct_inputronic_parser_1_1_mouse_event.html#af75fb305147f85b3bb156755c7bde035',1,'InputronicParser::MouseEvent']]],
+  ['btnscrollwheel_8',['btnScrollWheel',['../struct_inputronic_parser_1_1_mouse_event.html#a49441f92550b045af29eb998f2091188',1,'InputronicParser::MouseEvent']]]
 ];
