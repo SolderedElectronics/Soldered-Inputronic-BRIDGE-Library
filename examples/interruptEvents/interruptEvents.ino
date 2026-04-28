@@ -13,29 +13,24 @@
  *              bandwidth.
  *
  *              Hardware wiring:
- *              - Connect the BRIDGE interrupt output to the pin defined
- *                by INTERRUPT_PIN below.
- *              - The BRIDGE outputs an active-LOW pulse on GPIO 12 when
- *                in I2C mode and on GPIO 9 when in UART or SPI mode.
+ *              - Connect the BRIDGE interrupt output (GPIO 21) to the pin
+ *                defined by INTERRUPT_PIN below.
  *
  * @authors     Josip Šimun Kuči @ soldered.com
  ***************************************************/
 
-#include <Wire.h>
 #include "Inputronic-BRIDGE.h"
 
-// Parser instance used for all communication protocols.
 InputronicParser parser;
 
 // Pin on the receiving MCU connected to the BRIDGE interrupt output.
-// Change this to match your wiring.
 static const int8_t INTERRUPT_PIN = 5;
 
-// Optional: this flag can be set by the ISR callback and checked in loop().
+// Optional: flag set by the ISR callback and checked in loop().
 volatile bool newDataFlag = false;
 
 // Optional user callback invoked from ISR context when the BRIDGE signals
-// new data.  Keep it very short -- do not use Serial or blocking calls here.
+// new data.  Keep it very short — no Serial or blocking calls here.
 void onBridgeDataReady()
 {
     newDataFlag = true;
@@ -43,45 +38,52 @@ void onBridgeDataReady()
 
 void setup()
 {
-    // USB serial for monitoring events in Serial Monitor.
     Serial.begin(115200);
 
     // --- Protocol selection ---
-    // Uncomment ONE of the following blocks depending on which protocol
-    // you are using between the BRIDGE and this MCU.
+    // Uncomment ONE block depending on which protocol you wired up.
 
     // ---- I2C ----
-    // The BRIDGE interrupt output is on GPIO 12 in I2C mode.
-    //parser.configureI2c(0x50, 8, 9);
-    //parser.begin(InputronicParser::PROTOCOL_I2C);
+    // Call Wire.begin() with your SDA/SCL pins, then pass Wire to begin().
+    Wire.begin(8, 9);
+    parser.configureI2c(0x50);
+    if (!parser.begin(InputronicParser::PROTOCOL_I2C, Wire,
+                      true, INTERRUPT_PIN, false)) // interrupt on FALLING edge
+    {
+        Serial.println("Could not connect to BRIDGE over I2C!");
+        while (true);
+    }
 
     // ---- UART ----
-    // The BRIDGE interrupt output is on GPIO 9 in UART mode.
     //Serial1.begin(115200, SERIAL_8N1, 10, 12);
-    //parser.begin(InputronicParser::PROTOCOL_UART);
+    //if (!parser.begin(InputronicParser::PROTOCOL_UART, Serial1,
+    //                  true, INTERRUPT_PIN, false))
+    //{
+    //    Serial.println("Could not connect to BRIDGE over UART!");
+    //    while (true);
+    //}
 
     // ---- SPI ----
-    // The BRIDGE interrupt output is on GPIO 9 in SPI mode.
-    parser.begin(InputronicParser::PROTOCOL_SPI, 10);
-
-    // Enable the interrupt pin.  This configures INTERRUPT_PIN as
-    // INPUT_PULLUP and attaches an ISR on the FALLING edge so that
-    // pollEvents() only reads the bus when the BRIDGE has new data.
-    parser.enableInterruptPin(INTERRUPT_PIN);
+    //SPI.begin();
+    //if (!parser.begin(InputronicParser::PROTOCOL_SPI, SPI, 10, 1000000,
+    //                  true, INTERRUPT_PIN, false))
+    //{
+    //    Serial.println("Could not connect to BRIDGE over SPI!");
+    //    while (true);
+    //}
 
     // Optionally register a callback that fires inside the ISR.
     parser.onDataReady(onBridgeDataReady);
 
-    Serial.println("Inputronic BRIDGE interrupt example ready.");
+    Serial.println("BRIDGE connected — interrupt mode active.");
 }
 
 void loop()
 {
-    // pollEvents() will return immediately without bus traffic unless
+    // pollEvents() returns immediately without bus traffic unless
     // the interrupt flag has been set by the BRIDGE.
     auto events = parser.pollEvents();
 
-    // Keyboard event: prints the received keys.
     if (events.keyboard.valid)
     {
         Serial.print("Keyboard: ");
@@ -92,7 +94,6 @@ void loop()
         Serial.println();
     }
 
-    // Mouse event: prints movement, buttons, and scroll.
     if (events.mouse.valid)
     {
         Serial.printf("Mouse X:%d Y:%d L:%d R:%d M:%d Scroll:%d\n",
@@ -101,19 +102,16 @@ void loop()
                       events.mouse.btnMiddle, events.mouse.scroll);
     }
 
-    // MIDI event: prints three MIDI bytes in hex.
     if (events.midi.valid)
     {
         Serial.printf("MIDI %02X %02X %02X\n",
                       events.midi.b1, events.midi.b2, events.midi.b3);
     }
 
-    // Alternatively, you can check the flag set by the ISR callback
-    // to do additional work only when new data actually arrived.
     if (newDataFlag)
     {
         newDataFlag = false;
-        // The events above already contain the latest data, so this
-        // is just a demonstration of using the callback flag.
+        // events above already contain the latest data; this flag
+        // can be used to trigger additional work on data arrival.
     }
 }

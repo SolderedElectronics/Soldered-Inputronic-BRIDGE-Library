@@ -50,68 +50,52 @@ void IRAM_ATTR InputronicParser::isrHandler()
 }
 
 /**
- * @brief                   Initialize communication mode (UART, I2C or SPI).
+ * @brief                   Initialise I2C mode.
  */
-void InputronicParser::begin(CommProtocol p, uint8_t spiCs, uint32_t spiHz, bool enableInterruptParam,
+bool InputronicParser::begin(CommProtocol p, TwoWire &wire, bool enableInterruptParam, int8_t interruptPinParam,
+                             bool activeHigh)
+{
+    protocol = p;
+    i2cPort = &wire;
+    configureInterrupt(enableInterruptParam, interruptPinParam, activeHigh);
+    return checkConnection();
+}
+
+/**
+ * @brief                   Initialise SPI mode.
+ */
+bool InputronicParser::begin(CommProtocol p, SPIClass &spi, uint8_t spiCs, uint32_t spiHz,
+                             bool enableInterruptParam, int8_t interruptPinParam, bool activeHigh)
+{
+    protocol = p;
+    spiPort = &spi;
+    spiCsPin = spiCs;
+    spiSettings = SPISettings(spiHz, MSBFIRST, SPI_MODE0);
+    configureInterrupt(enableInterruptParam, interruptPinParam, activeHigh);
+    pinMode(spiCsPin, OUTPUT);
+    digitalWrite(spiCsPin, HIGH);
+    spiInitialized = true;
+    return checkConnection();
+}
+
+/**
+ * @brief                   Initialise UART mode.
+ */
+bool InputronicParser::begin(CommProtocol p, HardwareSerial &serial, bool enableInterruptParam,
                              int8_t interruptPinParam, bool activeHigh)
 {
     protocol = p;
-    spiCsPin = spiCs;
-    spiSettings = SPISettings(spiHz, MSBFIRST, SPI_MODE0);
+    uartPort = &serial;
     configureInterrupt(enableInterruptParam, interruptPinParam, activeHigh);
-    if (protocol == PROTOCOL_I2C && !i2cInitialized)
-    {
-        if (i2cSdaPin >= 0 && i2cSclPin >= 0)
-        {
-            Wire.begin(i2cSdaPin, i2cSclPin, i2cClock);
-        }
-        else
-        {
-            Wire.begin();
-        }
-        i2cInitialized = true;
-    }
-    if (protocol == PROTOCOL_SPI)
-    {
-        SPI.begin();
-        pinMode(spiCsPin, OUTPUT);
-        digitalWrite(spiCsPin, HIGH);
-        spiInitialized = true;
-    }
+    return checkConnection();
 }
 
 /**
- * @brief                   Initialize communication mode with custom SPI pins.
+ * @brief                   Set the I2C slave address.
  */
-void InputronicParser::begin(CommProtocol p, uint8_t spiCs, uint32_t spiHz, int8_t spiSck, int8_t spiMiso,
-                             int8_t spiMosi, bool enableInterruptParam, int8_t interruptPinParam, bool activeHigh)
-{
-    protocol = p;
-    spiCsPin = spiCs;
-    spiSckPin = spiSck;
-    spiMisoPin = spiMiso;
-    spiMosiPin = spiMosi;
-    spiSettings = SPISettings(spiHz, MSBFIRST, SPI_MODE0);
-    configureInterrupt(enableInterruptParam, interruptPinParam, activeHigh);
-    if (protocol == PROTOCOL_SPI)
-    {
-        SPI.begin(spiSckPin, spiMisoPin, spiMosiPin, spiCsPin);
-        pinMode(spiCsPin, OUTPUT);
-        digitalWrite(spiCsPin, HIGH);
-        spiInitialized = true;
-    }
-}
-
-/**
- * @brief                   Configure I2C address and optional pins.
- */
-void InputronicParser::configureI2c(uint8_t addr, int8_t sda, int8_t scl, uint32_t clock)
+void InputronicParser::configureI2c(uint8_t addr)
 {
     i2cSlaveAddr = addr;
-    i2cSdaPin = sda;
-    i2cSclPin = scl;
-    i2cClock = clock;
-    i2cInitialized = false;
 }
 
 /**
@@ -145,9 +129,25 @@ void InputronicParser::setHidRawPolling(bool enabled)
  */
 void InputronicParser::setInterruptMode(bool enable, int8_t pin, bool activeHigh)
 {
-    (void)pin;
-    (void)activeHigh;
     enableInterrupt = enable;
+    if (enable)
+    {
+        if (pin >= 0)
+        {
+            interruptPin = pin;
+            pinMode(pin, INPUT);
+            attachInterrupt(digitalPinToInterrupt(pin),
+                            isrHandler,
+                            activeHigh ? RISING : FALLING);
+        }
+    }
+    else
+    {
+        if (interruptPin >= 0)
+        {
+            detachInterrupt(digitalPinToInterrupt(interruptPin));
+        }
+    }
 }
 
 /**
@@ -159,13 +159,162 @@ void InputronicParser::feedLine(const String &line)
 }
 
 /**
+ * @brief                   Send PING and wait for PONG to confirm the bridge is reachable.
+ */
+bool InputronicParser::checkConnection()
+{
+    switch (protocol)
+    {
+        case PROTOCOL_I2C:
+        {
+            if (!i2cPort)
+            {
+                return false;
+            }
+            for (int attempt = 0; attempt < 3; attempt++)
+            {
+                i2cPort->beginTransmission(i2cSlaveAddr);
+                i2cPort->write((const uint8_t *)"PING", 4);
+                if (i2cPort->endTransmission() != 0)
+                {
+                    delay(50);
+                    continue;
+                }
+                uint32_t deadline = millis() + 50;
+                while (millis() < deadline)
+                {
+                    delay(5);
+                    i2cPort->requestFrom(i2cSlaveAddr, (uint8_t)48);
+                    uint8_t rawBuf[48] = {0};
+                    uint8_t rawLen = 0;
+                    while (i2cPort->available() && rawLen < 48)
+                    {
+                        rawBuf[rawLen++] = i2cPort->read();
+                    }
+                    if (rawLen > 1)
+                    {
+                        uint8_t payloadLen = rawBuf[0];
+                        if (payloadLen > 0 && payloadLen < 48 && payloadLen <= (rawLen - 1))
+                        {
+                            String msg;
+                            msg.reserve(payloadLen);
+                            for (uint8_t i = 1; i <= payloadLen; i++)
+                            {
+                                msg += (char)rawBuf[i];
+                            }
+                            msg.trim();
+                            if (msg == "TS;PONG;TE")
+                            {
+                                i2cPort->beginTransmission(i2cSlaveAddr);
+                                i2cPort->write((const uint8_t *)"ACK", 3);
+                                i2cPort->endTransmission();
+                                return true;
+                            }
+                        }
+                    }
+                }
+            }
+            return false;
+        }
+
+        case PROTOCOL_SPI:
+        {
+            if (!spiPort)
+            {
+                return false;
+            }
+            uint8_t txBuf[SPI_MAX_LEN] = {0};
+            uint8_t rxBuf[SPI_MAX_LEN] = {0};
+
+            // Transaction 1: send PING
+            memcpy(txBuf, "PING", 4);
+            spiPort->beginTransaction(spiSettings);
+            digitalWrite(spiCsPin, LOW);
+            spiPort->transferBytes(txBuf, rxBuf, SPI_MAX_LEN);
+            digitalWrite(spiCsPin, HIGH);
+            spiPort->endTransaction();
+
+            // Give firmware time to process PING and queue PONG
+            delay(50);
+
+            // Transaction 2: read PONG
+            memset(txBuf, 0, SPI_MAX_LEN);
+            memset(rxBuf, 0, SPI_MAX_LEN);
+            spiPort->beginTransaction(spiSettings);
+            digitalWrite(spiCsPin, LOW);
+            spiPort->transferBytes(txBuf, rxBuf, SPI_MAX_LEN);
+            digitalWrite(spiCsPin, HIGH);
+            spiPort->endTransaction();
+
+            uint8_t payloadLen = rxBuf[0];
+            if (payloadLen > 0 && payloadLen < SPI_MAX_LEN)
+            {
+                String msg;
+                msg.reserve(payloadLen);
+                for (uint8_t i = 0; i < payloadLen; i++)
+                {
+                    msg += (char)rxBuf[i + 1];
+                }
+                if (msg == "TS;PONG;TE")
+                {
+                    memset(txBuf, 0, SPI_MAX_LEN);
+                    memcpy(txBuf, "ACK", 3);
+                    spiPort->beginTransaction(spiSettings);
+                    digitalWrite(spiCsPin, LOW);
+                    spiPort->transferBytes(txBuf, rxBuf, SPI_MAX_LEN);
+                    digitalWrite(spiCsPin, HIGH);
+                    spiPort->endTransaction();
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        case PROTOCOL_UART:
+        {
+            if (!uartPort)
+            {
+                return false;
+            }
+            uartPort->print("PING\n");
+            uint32_t deadline = millis() + 500;
+            String buf;
+            while (millis() < deadline)
+            {
+                while (uartPort->available())
+                {
+                    buf += (char)uartPort->read();
+                }
+                if (buf.indexOf("TS;PONG;TE") >= 0)
+                {
+                    return true;
+                }
+                delay(10);
+            }
+            return false;
+        }
+    }
+    return false;
+}
+
+/**
  * @brief                   Poll for events and return any newly parsed data.
  */
 InputronicParser::EventBundle InputronicParser::pollEvents()
 {
     if (protocol == PROTOCOL_UART)
     {
-        if (enableInterrupt && !interruptFlag)
+        if (!uartPort)
+        {
+            return latest;
+        }
+
+        noInterrupts();
+        bool flagWasSet = interruptFlag;
+        if (flagWasSet) interruptFlag = false;
+        interrupts();
+
+        if (enableInterrupt && !flagWasSet)
         {
             EventBundle out = latest;
             latest.keyboard.valid = false;
@@ -176,16 +325,20 @@ InputronicParser::EventBundle InputronicParser::pollEvents()
             return out;
         }
 
-        if (enableInterrupt && interruptFlag)
-        {
-            interruptFlag = false;
-        }
-
         static String uartBuffer = "";
 
-        while (Serial1.available())
+        while (uartPort->available())
         {
-            uartBuffer += (char)Serial1.read();
+            uartBuffer += (char)uartPort->read();
+        }
+
+        if (uartBuffer.length() > 512)
+        {
+            int lastTs = uartBuffer.lastIndexOf("TS;");
+            if (lastTs >= 0)
+                uartBuffer = uartBuffer.substring(lastTs);
+            else
+                uartBuffer = "";
         }
 
         int tePos;
@@ -199,9 +352,19 @@ InputronicParser::EventBundle InputronicParser::pollEvents()
     }
     else if (protocol == PROTOCOL_I2C)
     {
-        const uint8_t MAX_LEN = 128;
+        if (!i2cPort)
+        {
+            return latest;
+        }
 
-        if (enableInterrupt && !interruptFlag && !requestDescPending && !requestHidRawPending)
+        const uint8_t MAX_LEN = 48;
+
+        noInterrupts();
+        bool flagWasSet = interruptFlag;
+        if (flagWasSet) interruptFlag = false;
+        interrupts();
+
+        if (enableInterrupt && !flagWasSet && !requestDescPending && !requestHidRawPending)
         {
             EventBundle out = latest;
             latest.keyboard.valid = false;
@@ -210,24 +373,6 @@ InputronicParser::EventBundle InputronicParser::pollEvents()
             latest.descriptor.valid = false;
             latest.hidRaw.valid = false;
             return out;
-        }
-
-        if (enableInterrupt && interruptFlag)
-        {
-            interruptFlag = false;
-        }
-
-        if (!i2cInitialized)
-        {
-            if (i2cSdaPin >= 0 && i2cSclPin >= 0)
-            {
-                Wire.begin(i2cSdaPin, i2cSclPin, i2cClock);
-            }
-            else
-            {
-                Wire.begin();
-            }
-            i2cInitialized = true;
         }
 
         if (!enableInterrupt)
@@ -244,62 +389,54 @@ InputronicParser::EventBundle InputronicParser::pollEvents()
             }
         }
 
-        Wire.requestFrom(i2cSlaveAddr, (uint8_t)MAX_LEN);
+        i2cPort->requestFrom(i2cSlaveAddr, (uint8_t)MAX_LEN);
 
-        // Read ALL raw bytes from this I2C transaction, keeping only
-        // printable ASCII (the TS;...;TE frame characters).  Length
-        // prefix bytes and zero-padding are silently skipped.
-        static String i2cBuffer = "";
+        // Each I2C read carries exactly one length-prefixed message.
+        // Process it as a standalone unit — no accumulation across reads.
         bool gotData = false;
 
-        while (Wire.available())
+        uint8_t rawBuf[MAX_LEN] = {0};
+        uint8_t rawLen = 0;
+        while (i2cPort->available() && rawLen < MAX_LEN)
         {
-            uint8_t b = Wire.read();
-            if (b >= 0x20 && b <= 0x7E)
+            rawBuf[rawLen++] = i2cPort->read();
+        }
+
+        if (rawLen > 1)
+        {
+            uint8_t payloadLen = rawBuf[0];
+            if (payloadLen > 0 && payloadLen < MAX_LEN && payloadLen <= (rawLen - 1))
             {
-                i2cBuffer += (char)b;
+                String msg;
+                msg.reserve(payloadLen);
+                for (uint8_t idx = 1; idx <= payloadLen; idx++)
+                {
+                    msg += (char)rawBuf[idx];
+                }
+                msg.trim();
+                if (msg.startsWith("TS;") && msg.endsWith(";TE"))
+                {
+                    feedLine(msg);
+                }
                 gotData = true;
             }
         }
 
-        if (i2cBuffer.length() > 512)
-        {
-            int lastTs = i2cBuffer.lastIndexOf("TS;");
-            if (lastTs >= 0)
-            {
-                i2cBuffer = i2cBuffer.substring(lastTs);
-            }
-            else
-            {
-                i2cBuffer = "";
-            }
-        }
-
-        int tePos;
-        while ((tePos = i2cBuffer.indexOf(";TE")) != -1)
-        {
-            int tsPos = i2cBuffer.indexOf("TS;");
-            if (tsPos < 0 || tsPos > tePos)
-            {
-                i2cBuffer.remove(0, tePos + 3);
-                continue;
-            }
-            String fullMsg = i2cBuffer.substring(tsPos, tePos + 3);
-            feedLine(fullMsg);
-            i2cBuffer.remove(0, tePos + 3);
-            i2cBuffer.trim();
-        }
-
         if (gotData)
         {
-            Wire.beginTransmission(i2cSlaveAddr);
-            Wire.write((const uint8_t *)"ACK", 3);
-            Wire.endTransmission();
+            i2cPort->beginTransmission(i2cSlaveAddr);
+            i2cPort->write((const uint8_t *)"ACK", 3);
+            i2cPort->endTransmission();
         }
     }
     else if (protocol == PROTOCOL_SPI)
     {
-        if (enableInterrupt && !interruptFlag && !requestDescPending && !requestHidRawPending)
+        noInterrupts();
+        bool flagWasSet = interruptFlag;
+        if (flagWasSet) interruptFlag = false;
+        interrupts();
+
+        if (enableInterrupt && !flagWasSet && !requestDescPending && !requestHidRawPending)
         {
             EventBundle out = latest;
             latest.keyboard.valid = false;
@@ -310,9 +447,8 @@ InputronicParser::EventBundle InputronicParser::pollEvents()
             return out;
         }
 
-        if (enableInterrupt && interruptFlag)
+        if (enableInterrupt && flagWasSet)
         {
-            interruptFlag = false;
             // Wait for the SPI slave to enter its blocking receive after
             // pulsing the interrupt pin.  The firmware needs ~25 us
             // (20 us pulse + a few us to call spi_slave_transmit).
@@ -349,7 +485,7 @@ InputronicParser::EventBundle InputronicParser::pollEvents()
  */
 void InputronicParser::pollSpi()
 {
-    if (!spiInitialized)
+    if (!spiInitialized || !spiPort)
     {
         return;
     }
@@ -378,62 +514,22 @@ void InputronicParser::pollSpi()
         spiPendingCommand = "";
     }
 
-    SPI.beginTransaction(spiSettings);
+    spiPort->beginTransaction(spiSettings);
     digitalWrite(spiCsPin, LOW);
-    SPI.transferBytes(txBuf, rxBuf, SPI_MAX_LEN);
+    spiPort->transferBytes(txBuf, rxBuf, SPI_MAX_LEN);
     digitalWrite(spiCsPin, HIGH);
-    SPI.endTransaction();
+    spiPort->endTransaction();
 
     uint8_t payloadLen = rxBuf[0];
     String msg = "";
-    int startIndex = -1;
-    bool hasData = false;
+    bool hasData = (payloadLen > 0 && payloadLen < SPI_MAX_LEN);
 
-    for (uint8_t i = 0; i + 2 < SPI_MAX_LEN; i++)
-    {
-        if (rxBuf[i] != 0)
-        {
-            hasData = true;
-        }
-        if (rxBuf[i] == 'T' && rxBuf[i + 1] == 'S' && rxBuf[i + 2] == ';')
-        {
-            startIndex = i;
-            break;
-        }
-    }
-    if (hasData && startIndex < 0)
-    {
-        for (uint8_t i = 0; i < SPI_MAX_LEN; i++)
-        {
-            if (rxBuf[i] != 0)
-            {
-                startIndex = i;
-                break;
-            }
-        }
-    }
-
-    if (payloadLen > 0 && payloadLen < SPI_MAX_LEN)
+    if (hasData)
     {
         for (uint8_t i = 0; i < payloadLen; i++)
         {
             msg += static_cast<char>(rxBuf[i + 1]);
         }
-    }
-    else if (startIndex >= 0)
-    {
-        for (uint8_t i = startIndex; i < SPI_MAX_LEN; i++)
-        {
-            if (rxBuf[i] == 0)
-            {
-                break;
-            }
-            msg += static_cast<char>(rxBuf[i]);
-        }
-    }
-
-    if (hasData)
-    {
         spiPendingAck = true;
     }
     if (msg.length() > 0)
@@ -515,19 +611,25 @@ void InputronicParser::sendSpiCommand(const char *command)
  */
 void InputronicParser::sendI2cCommand(const char *command)
 {
-    Wire.beginTransmission(i2cSlaveAddr);
-    Wire.write((const uint8_t *)command, strlen(command));
-    Wire.endTransmission();
+    if (!i2cPort)
+    {
+        return;
+    }
+    i2cPort->beginTransmission(i2cSlaveAddr);
+    i2cPort->write((const uint8_t *)command, strlen(command));
+    i2cPort->endTransmission();
 }
 
-/**
- * @brief                   Interrupt configuration hook (currently unused).
- */
 void InputronicParser::configureInterrupt(bool enable, int8_t pin, bool activeHigh)
 {
-    (void)enable;
-    (void)pin;
-    (void)activeHigh;
+    if (!enable || pin < 0)
+    {
+        return;
+    }
+    interruptPin = pin;
+    enableInterrupt = true;
+    pinMode(pin, INPUT_PULLUP);
+    attachInterrupt(digitalPinToInterrupt(pin), isrHandler, activeHigh ? RISING : FALLING);
 }
 
 /**
@@ -566,11 +668,17 @@ void InputronicParser::parseMessage(const String &msgIn)
  */
 void InputronicParser::parseKeyboard(const String &msg)
 {
-    int start = msg.indexOf(";K;") + 3;
+    int kPos = msg.indexOf(";K;");
     int end = msg.indexOf(";TE");
-    if (start > 0 && end > start)
+    if (kPos == -1 || end == -1 || end <= kPos)
+    {
+        return;
+    }
+    int start = kPos + 3;
+    if (end > start)
     {
         String keyStr = msg.substring(start, end);
+        keyStr.replace("\\;", ";");
         latest.keyboard.payload = keyStr;
         latest.keyboard.keyCount = 0;
         for (uint8_t i = 0; i < 8; i++)
@@ -582,15 +690,18 @@ void InputronicParser::parseKeyboard(const String &msg)
         {
             if (keyStr[i] == '<')
             {
-                int end = keyStr.indexOf('>', i + 1);
-                if (end > i)
+                int closeAngle = keyStr.indexOf('>', i + 1);
+                if (closeAngle > i)
                 {
-                    latest.keyboard.keys[latest.keyboard.keyCount++] = keyStr.substring(i, end + 1);
-                    i = end + 1;
+                    latest.keyboard.keys[latest.keyboard.keyCount++] = keyStr.substring(i, closeAngle + 1);
+                    i = closeAngle + 1;
                     continue;
                 }
             }
-            latest.keyboard.keys[latest.keyboard.keyCount++] = String(keyStr[i]);
+            if (latest.keyboard.keyCount < 8)
+            {
+                latest.keyboard.keys[latest.keyboard.keyCount++] = String(keyStr[i]);
+            }
             i += 1;
         }
         if (latest.keyboard.keyCount == 0 && keyStr.length() == 1)
@@ -603,6 +714,10 @@ void InputronicParser::parseKeyboard(const String &msg)
 
 /**
  * @brief                   Parse MIDI message payload.
+ *
+ * The firmware accumulates multiple MIDI events per USB transfer into a single
+ * packet: TS;MIDI;b1;b2;b3|b1;b2;b3|...;TE  Only the first event is stored in
+ * the struct; the struct can be extended in a future revision to hold all events.
  */
 void InputronicParser::parseMIDI(const String &msgIn)
 {
@@ -611,23 +726,28 @@ void InputronicParser::parseMIDI(const String &msgIn)
     {
         return;
     }
-    String msg = msgIn.substring(start + 8);
+    String payload = msgIn.substring(start + 8);
+    int tePos = payload.indexOf(";TE");
+    if (tePos >= 0)
+    {
+        payload = payload.substring(0, tePos);
+    }
+
+    int pipePos = payload.indexOf('|');
+    String firstEvent = (pipePos >= 0) ? payload.substring(0, pipePos) : payload;
+
     int parts[3] = {0};
     int idx = 0;
     String token = "";
-    for (int i = 0; i < msg.length(); i++)
+    for (int i = 0; i < firstEvent.length() && idx < 3; i++)
     {
-        char c = msg[i];
-        if (c == ';' || c == '\n' || c == '\r')
+        char c = firstEvent[i];
+        if (c == ';')
         {
-            if (token.length() > 0 && idx < 3)
+            if (token.length() > 0)
             {
-                parts[idx++] = strtol(token.c_str(), nullptr, 16);
+                parts[idx++] = (int)strtol(token.c_str(), nullptr, 16);
                 token = "";
-            }
-            if (msg.startsWith("TE", i + 1))
-            {
-                break;
             }
         }
         else
@@ -635,6 +755,11 @@ void InputronicParser::parseMIDI(const String &msgIn)
             token += c;
         }
     }
+    if (token.length() > 0 && idx < 3)
+    {
+        parts[idx++] = (int)strtol(token.c_str(), nullptr, 16);
+    }
+
     if (idx == 3)
     {
         latest.midi.b1 = parts[0];
@@ -652,14 +777,17 @@ void InputronicParser::parseMouse(const String &msgIn)
     String msg = msgIn;
     msg.trim();
 
-    int start = msg.indexOf(";M;") + 3;
+    int mPos = msg.indexOf(";M;");
     int end = msg.indexOf(";TE");
-    if (end == -1)
-        end = msg.length();
+    if (mPos == -1 || end == -1 || end <= mPos)
+    {
+        return;
+    }
+    int start = mPos + 3;
 
     String body = msg.substring(start, end);
 
-    int vals[8] = {0};
+    int vals[9] = {0};
     int idx = 0;
     String token = "";
 
@@ -668,7 +796,7 @@ void InputronicParser::parseMouse(const String &msgIn)
         char c = body[i];
         if (c == ';')
         {
-            if (token.length() > 0 && idx < 8)
+            if (token.length() > 0 && idx < 9)
             {
                 vals[idx++] = atoi(token.c_str());
                 token = "";
@@ -679,12 +807,12 @@ void InputronicParser::parseMouse(const String &msgIn)
             token += c;
         }
     }
-    if (token.length() > 0 && idx < 8)
+    if (token.length() > 0 && idx < 9)
     {
         vals[idx++] = atoi(token.c_str());
     }
 
-    if (idx >= 8)
+    if (idx >= 9)
     {
         latest.mouse.x = vals[0];
         latest.mouse.y = vals[1];
@@ -694,6 +822,7 @@ void InputronicParser::parseMouse(const String &msgIn)
         latest.mouse.btnMiddle = vals[5];
         latest.mouse.btnBackward = vals[6];
         latest.mouse.btnForward = vals[7];
+        latest.mouse.btnScrollWheel = vals[8];
         latest.mouse.valid = true;
     }
 }
@@ -703,9 +832,14 @@ void InputronicParser::parseMouse(const String &msgIn)
  */
 void InputronicParser::parseDescriptor(const String &msg)
 {
-    int start = msg.indexOf(";DESC;") + 6;
+    int dPos = msg.indexOf(";DESC;");
     int end = msg.indexOf(";TE");
-    if (start > 5 && end > start)
+    if (dPos == -1 || end == -1 || end <= dPos)
+    {
+        return;
+    }
+    int start = dPos + 6;
+    if (end > start)
     {
         latest.descriptor.hex = msg.substring(start, end);
         latest.descriptor.valid = true;
@@ -717,16 +851,20 @@ void InputronicParser::parseDescriptor(const String &msg)
  */
 void InputronicParser::parseHidRaw(const String &msg)
 {
-    int start = msg.indexOf(";HIDRAW;") + 8;
+    int hPos = msg.indexOf(";HIDRAW;");
     int end = msg.indexOf(";TE");
-    if (start > 7 && end > start)
+    if (hPos == -1 || end == -1 || end <= hPos)
+    {
+        return;
+    }
+    int start = hPos + 8;
+    if (end > start)
     {
         String hex = msg.substring(start, end);
-        if (hex.length() > 0 && hex != lastHidRawHex)
+        if (hex.length() > 0)
         {
             latest.hidRaw.hex = hex;
             latest.hidRaw.valid = true;
-            lastHidRawHex = hex;
         }
     }
 }

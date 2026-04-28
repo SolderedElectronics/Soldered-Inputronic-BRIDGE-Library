@@ -39,6 +39,7 @@ class InputronicParser
         int16_t x = 0, y = 0;
         int8_t scroll = 0;
         bool btnLeft = 0, btnRight = 0, btnMiddle = 0, btnBackward = 0, btnForward = 0;
+        bool btnScrollWheel = false;
         bool valid = false;
     };
     struct MIDIEvent
@@ -66,12 +67,59 @@ class InputronicParser
         HidRawEvent hidRaw;
     };
 
-    void begin(CommProtocol p, uint8_t spiCs = 10, uint32_t spiHz = 1000000, bool enableInterruptParam = false,
-               int8_t interruptPinParam = -1, bool activeHigh = true);
-    void begin(CommProtocol p, uint8_t spiCs, uint32_t spiHz, int8_t spiSck, int8_t spiMiso, int8_t spiMosi,
+    /**
+     * @brief Set the I2C slave address (default 0x50).
+     *        Call before begin() if the bridge uses a non-default address.
+     */
+    void configureI2c(uint8_t addr = 0x50);
+
+    /**
+     * @brief Initialise I2C mode and verify the bridge is present.
+     *
+     * @param p                    Must be PROTOCOL_I2C.
+     * @param wire                 Wire port to use (e.g. Wire, Wire1).
+     *                             Call wire.begin(...) before this.
+     * @param enableInterruptParam Enable interrupt-driven polling.
+     * @param interruptPinParam    MCU pin connected to the bridge interrupt output.
+     * @param activeHigh           true = interrupt fires on RISING, false = FALLING.
+     * @return true  Bridge responded to PING.
+     * @return false No response within timeout (bridge not connected or not ready).
+     */
+    bool begin(CommProtocol p, TwoWire &wire,
                bool enableInterruptParam = false, int8_t interruptPinParam = -1, bool activeHigh = true);
 
-    void configureI2c(uint8_t addr, int8_t sda = -1, int8_t scl = -1, uint32_t clock = 100000);
+    /**
+     * @brief Initialise SPI mode and verify the bridge is present.
+     *
+     * @param p                    Must be PROTOCOL_SPI.
+     * @param spi                  SPI port to use (e.g. SPI, SPI1).
+     *                             Call spi.begin(...) before this.
+     * @param spiCs                Chip-select pin (output, driven by this library).
+     * @param spiHz                SPI clock frequency in Hz (default 1 MHz).
+     * @param enableInterruptParam Enable interrupt-driven polling.
+     * @param interruptPinParam    MCU pin connected to the bridge interrupt output.
+     * @param activeHigh           true = interrupt fires on RISING, false = FALLING.
+     * @return true  Bridge responded to PING.
+     * @return false No response within timeout.
+     */
+    bool begin(CommProtocol p, SPIClass &spi, uint8_t spiCs, uint32_t spiHz = 1000000,
+               bool enableInterruptParam = false, int8_t interruptPinParam = -1, bool activeHigh = true);
+
+    /**
+     * @brief Initialise UART mode and verify the bridge is present.
+     *
+     * @param p                    Must be PROTOCOL_UART.
+     * @param serial               HardwareSerial port to use (e.g. Serial1).
+     *                             Call serial.begin(...) before this.
+     * @param enableInterruptParam Enable interrupt-driven polling.
+     * @param interruptPinParam    MCU pin connected to the bridge interrupt output.
+     * @param activeHigh           true = interrupt fires on RISING, false = FALLING.
+     * @return true  Bridge responded to PING within 500 ms.
+     * @return false No response (bridge not connected or no USB device attached yet).
+     */
+    bool begin(CommProtocol p, HardwareSerial &serial,
+               bool enableInterruptParam = false, int8_t interruptPinParam = -1, bool activeHigh = true);
+
     void requestDescriptor();
     void requestHidRawOnce();
     void setHidRawPolling(bool enabled);
@@ -83,33 +131,32 @@ class InputronicParser
 
   private:
     CommProtocol protocol;
-    String inputBuffer;
     EventBundle latest;
+
+    TwoWire *i2cPort = nullptr;
     uint8_t i2cSlaveAddr = 0x50;
-    int8_t i2cSdaPin = -1;
-    int8_t i2cSclPin = -1;
-    uint32_t i2cClock = 100000;
-    bool i2cInitialized = false;
+
+    SPIClass *spiPort = nullptr;
     uint8_t spiCsPin = 10;
-    int8_t spiSckPin = -1;
-    int8_t spiMisoPin = -1;
-    int8_t spiMosiPin = -1;
     SPISettings spiSettings = SPISettings(1000000, MSBFIRST, SPI_MODE0);
     bool spiInitialized = false;
     static constexpr uint8_t SPI_MAX_LEN = 128;
     bool spiPendingAck = false;
     uint32_t spiFrameStartMs = 0;
     String spiPendingCommand;
+
+    HardwareSerial *uartPort = nullptr;
+
     bool requestDescPending = false;
     bool requestHidRawPending = false;
     bool pollHidRawEnabled = false;
-    String lastHidRawHex;
     bool enableInterrupt = false;
     bool expectingHidRawOnly = false;
     int8_t interruptPin = -1;
     static volatile bool interruptFlag;
     static void (*userIsrCallback)();
 
+    bool checkConnection();
     void pollSpi();
     void sendSpiCommand(const char *command);
     void sendI2cCommand(const char *command);
