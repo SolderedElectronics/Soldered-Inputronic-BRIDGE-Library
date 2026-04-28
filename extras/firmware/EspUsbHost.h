@@ -28,15 +28,15 @@
 class EspUsbHost {
 public:
   bool isReady = false;
-  uint8_t interval;
-  unsigned long lastCheck;
+  uint8_t interval = 0;
+  unsigned long lastCheck = 0;
 
   struct endpoint_data_t {
     uint8_t bInterfaceNumber;
     uint8_t bInterfaceClass;
     uint8_t bInterfaceSubClass;
     uint8_t bInterfaceProtocol;
-    uint8_t bCountryCode;    
+    uint8_t bCountryCode;
   };
   endpoint_data_t endpoint_data_list[17];
   uint8_t _bInterfaceNumber;
@@ -54,34 +54,188 @@ public:
   uint8_t usbInterface[16];
   uint8_t usbInterfaceSize;
 
-  hid_local_enum_t hidLocal;
+  hid_local_enum_t hidLocal = HID_LOCAL_NotSupported;
 
+  hid_keyboard_report_t last_keyboard_report = {};
+  uint8_t last_buttons = 0;
+
+  /**
+   * @brief       Initialize the USB host stack and register the client.
+   *
+   * @return      None
+   */
   void begin(void);
+
+  /**
+   * @brief       Drive USB host and client event handling; call from loop.
+   *
+   * @return      None
+   */
   void task(void);
 
   static void _clientEventCallback(const usb_host_client_event_msg_t *eventMsg, void *arg);
   void _configCallback(const usb_config_desc_t *config_desc);
+
+  /**
+   * @brief       Process a single USB descriptor item during enumeration.
+   *
+   * @param       uint8_t bDescriptorType
+   *              USB descriptor type byte.
+   *
+   * @param       const uint8_t *p
+   *              Pointer to the raw descriptor data.
+   *
+   * @return      None
+   */
   virtual void onConfig(const uint8_t bDescriptorType, const uint8_t *p);
+
+  /**
+   * @brief       Convert a USB string descriptor to an Arduino String.
+   *
+   * @param       const usb_str_desc_t *str_desc
+   *              Pointer to the USB string descriptor.
+   *
+   * @return      Decoded ASCII string, or empty string if str_desc is NULL.
+   */
   static String getUsbDescString(const usb_str_desc_t *str_desc);
+
   static void _onReceive(usb_transfer_t *transfer);
 
   static void _printPcapText(const char* title, uint16_t function, uint8_t direction, uint8_t endpoint, uint8_t type, uint8_t size, uint8_t stage, const uint8_t *data);
+
+  /**
+   * @brief       Submit a control transfer to fetch a descriptor from the device.
+   *
+   * @param       uint8_t bmRequestType
+   *              bmRequestType field of the setup packet.
+   *
+   * @param       uint8_t bDescriptorIndex
+   *              Descriptor index field of the setup packet.
+   *
+   * @param       uint8_t bDescriptorType
+   *              Descriptor type field of the setup packet.
+   *
+   * @param       uint16_t wInterfaceNumber
+   *              Interface number for the request.
+   *
+   * @param       uint16_t wDescriptorLength
+   *              Expected descriptor length in bytes.
+   *
+   * @return      ESP_OK on success, or an esp_err_t error code.
+   */
   esp_err_t submitControl(const uint8_t bmRequestType, const uint8_t bDescriptorIndex, const uint8_t bDescriptorType, const uint16_t wInterfaceNumber, const uint16_t wDescriptorLength);
+
   static void _onReceiveControl(usb_transfer_t *transfer);
 
+  /**
+   * @brief       Called for every mouse interrupt report received.
+   *
+   * @param       hid_mouse_report_t report
+   *              Current mouse report.
+   *
+   * @param       uint8_t last_buttons
+   *              Button bitmask from the previous report.
+   *
+   * @return      None
+   */
   virtual void onReceive(const usb_transfer_t *transfer){};
+
+  /**
+   * @brief       Called when the connected USB device is removed.
+   *
+   * @param       const usb_host_client_event_msg_t *eventMsg
+   *              Event message describing the gone device.
+   *
+   * @return      None
+   */
   virtual void onGone(const usb_host_client_event_msg_t *eventMsg){};
 
+  /**
+   * @brief       Convert a HID keycode to its ASCII equivalent.
+   *
+   * @param       uint8_t keycode
+   *              HID keycode value.
+   *
+   * @param       uint8_t shift
+   *              Non-zero if a shift modifier is active.
+   *
+   * @return      ASCII character, or 0 if no mapping exists.
+   */
   virtual uint8_t getKeycodeToAscii(uint8_t keycode, uint8_t shift);
+
+  /**
+   * @brief       Called whenever a new boot keyboard report is received.
+   *
+   * @param       hid_keyboard_report_t report
+   *              Current keyboard report.
+   *
+   * @param       hid_keyboard_report_t last_report
+   *              Previous keyboard report.
+   *
+   * @return      None
+   */
   virtual void onKeyboard(hid_keyboard_report_t report, hid_keyboard_report_t last_report);
+
+  /**
+   * @brief       Called for each newly pressed key in a keyboard report.
+   *
+   * @param       uint8_t ascii
+   *              ASCII value of the key, or 0 for non-printable keys.
+   *
+   * @param       uint8_t keycode
+   *              HID keycode of the key.
+   *
+   * @param       uint8_t modifier
+   *              Modifier bitmask at the time of the keypress.
+   *
+   * @return      None
+   */
   virtual void onKeyboardKey(uint8_t ascii, uint8_t keycode, uint8_t modifier);
 
+  /**
+   * @brief       Called for every mouse interrupt report received.
+   *
+   * @param       hid_mouse_report_t report
+   *              Current mouse report.
+   *
+   * @param       uint8_t last_buttons
+   *              Button bitmask from the previous report.
+   *
+   * @return      None
+   */
   virtual void onMouse(hid_mouse_report_t report, uint8_t last_buttons);
+
+  /**
+   * @brief       Called when the mouse button state changes.
+   *
+   * @param       hid_mouse_report_t report
+   *              Current mouse report.
+   *
+   * @param       uint8_t last_buttons
+   *              Button bitmask from the previous report.
+   *
+   * @return      None
+   */
   virtual void onMouseButtons(hid_mouse_report_t report, uint8_t last_buttons);
+
+  /**
+   * @brief       Called when the mouse position or wheel changes.
+   *
+   * @param       hid_mouse_report_t report
+   *              Current mouse report.
+   *
+   * @return      None
+   */
   virtual void onMouseMove(hid_mouse_report_t report);
 
-  void _onDataGamepad();
-
+  /**
+   * @brief       Set the HID locale used for keycode-to-ASCII translation.
+   *
+   * @param       hid_local_enum_t code
+   *              HID locale code from the HID specification.
+   *
+   * @return      None
+   */
   void setHIDLocal(hid_local_enum_t code);
 
   static uint8_t getItem(uint8_t val){

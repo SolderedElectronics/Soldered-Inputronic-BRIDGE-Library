@@ -1,3 +1,7 @@
+// This file is dead code retained for reference only. The entire content is
+// disabled with #if 0 to avoid link-time conflicts.
+#if 0
+
 #include <usb/usb_host.h>
 #include "usbhhelp.hpp"
 #include "esp_log.h"
@@ -95,3 +99,5 @@ void usbh_task(void)
     ESP_LOGI("", "usb_host_client_handle_events: %x", err);
   }
 }
+
+#endif

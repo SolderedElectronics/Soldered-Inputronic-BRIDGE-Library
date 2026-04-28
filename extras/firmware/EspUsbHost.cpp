@@ -207,6 +207,9 @@ void EspUsbHost::_clientEventCallback(const usb_host_client_event_msg_t *eventMs
 
         usb_host_device_close(usbHost->clientHandle, usbHost->deviceHandle);
 
+        usbHost->last_keyboard_report = {};
+        usbHost->last_buttons = 0;
+
         usbHost->onGone(eventMsg);
       }
       break;
@@ -361,8 +364,13 @@ void EspUsbHost::onConfig(const uint8_t bDescriptorType, const uint8_t *p) {
           ESP_LOGI("EspUsbHost", "usb_host_interface_claim() err=%x", claim_err);
         } else {
           ESP_LOGI("EspUsbHost", "usb_host_interface_claim() ESP_OK");
-          this->usbInterface[this->usbInterfaceSize] = intf->bInterfaceNumber;
-          this->usbInterfaceSize++;
+          if (this->usbInterfaceSize >= 16) {
+            ESP_LOGI("EspUsbHost", "usbInterface[] full, skipping interface %d", intf->bInterfaceNumber);
+          } else {
+            this->usbInterface[this->usbInterfaceSize] = intf->bInterfaceNumber;
+            this->usbInterfaceSize++;
+          }
+          // Always update context tracking vars so endpoint descriptors parse correctly
           _bInterfaceNumber = intf->bInterfaceNumber;
           _bInterfaceClass = intf->bInterfaceClass;
           _bInterfaceSubClass = intf->bInterfaceSubClass;
@@ -409,6 +417,10 @@ void EspUsbHost::onConfig(const uint8_t bDescriptorType, const uint8_t *p) {
         }
 
         if (ep_desc->bEndpointAddress & USB_B_ENDPOINT_ADDRESS_EP_DIR_MASK) {
+          if (this->usbTransferSize >= 16) {
+            ESP_LOGI("EspUsbHost", "usbTransfer[] full, skipping endpoint 0x%x", ep_desc->bEndpointAddress);
+            return;
+          }
           esp_err_t err = usb_host_transfer_alloc(ep_desc->wMaxPacketSize + 1, 0, &this->usbTransfer[this->usbTransferSize]);
           if (err != ESP_OK) {
             this->usbTransfer[this->usbTransferSize] = NULL;
@@ -544,11 +556,9 @@ void EspUsbHost::_onReceive(usb_transfer_t *transfer) {
   if (endpoint_data->bInterfaceClass == USB_CLASS_HID) {
     if (endpoint_data->bInterfaceSubClass == HID_SUBCLASS_BOOT) {
       if (endpoint_data->bInterfaceProtocol == HID_ITF_PROTOCOL_KEYBOARD) {
-        static hid_keyboard_report_t last_report = {};
-
         if (transfer->data_buffer[2] == HID_KEY_NUM_LOCK) {
           // HID_KEY_NUM_LOCK TODO!
-        } else if (memcmp(&last_report, transfer->data_buffer, sizeof(last_report))) {
+        } else if (memcmp(&usbHost->last_keyboard_report, transfer->data_buffer, sizeof(usbHost->last_keyboard_report))) {
           // chenge
           hid_keyboard_report_t report = {};
           report.modifier = transfer->data_buffer[0];
@@ -560,7 +570,7 @@ void EspUsbHost::_onReceive(usb_transfer_t *transfer) {
           report.keycode[4] = transfer->data_buffer[6];
           report.keycode[5] = transfer->data_buffer[7];
 
-          usbHost->onKeyboard(report, last_report);
+          usbHost->onKeyboard(report, usbHost->last_keyboard_report);
 
           bool shift = (report.modifier & KEYBOARD_MODIFIER_LEFTSHIFT) || (report.modifier & KEYBOARD_MODIFIER_RIGHTSHIFT);
           auto was_in_last = [&](uint8_t keycode) -> bool {
@@ -568,7 +578,7 @@ void EspUsbHost::_onReceive(usb_transfer_t *transfer) {
               return false;
             }
             for (int j = 0; j < 6; j++) {
-              if (last_report.keycode[j] == keycode) {
+              if (usbHost->last_keyboard_report.keycode[j] == keycode) {
                 return true;
               }
             }
@@ -582,19 +592,19 @@ void EspUsbHost::_onReceive(usb_transfer_t *transfer) {
             }
           }
 
-          memcpy(&last_report, &report, sizeof(last_report));
+          memcpy(&usbHost->last_keyboard_report, &report, sizeof(usbHost->last_keyboard_report));
         }
       } else if (endpoint_data->bInterfaceProtocol == HID_ITF_PROTOCOL_MOUSE) {
-        static uint8_t last_buttons = 0;
+        // Device report layout: [0]=Report ID [1]=buttons [2]=? [3]=X [4]=Y [6]=wheel
         hid_mouse_report_t report = {};
         report.buttons = transfer->data_buffer[1];
-        report.x = (uint8_t)transfer->data_buffer[3];
-        report.y = (uint8_t)transfer->data_buffer[4];
-        report.wheel = (uint8_t)transfer->data_buffer[6];
-        usbHost->onMouse(report, last_buttons);
-        if (report.buttons != last_buttons) {
-          usbHost->onMouseButtons(report, last_buttons);
-          last_buttons = report.buttons;
+        report.x      = (int8_t)transfer->data_buffer[3];
+        report.y      = -(int8_t)transfer->data_buffer[4];
+        report.wheel  = (int8_t)transfer->data_buffer[6];
+        usbHost->onMouse(report, usbHost->last_buttons);
+        if (report.buttons != usbHost->last_buttons) {
+          usbHost->onMouseButtons(report, usbHost->last_buttons);
+          usbHost->last_buttons = report.buttons;
         }
         if (report.x != 0 || report.y != 0 || report.wheel != 0) {
           usbHost->onMouseMove(report);
@@ -725,6 +735,10 @@ uint8_t EspUsbHost::getKeycodeToAscii(uint8_t keycode, uint8_t shift) {
     shift = 1;
   }
 
+  if (keycode >= 128) {
+    return 0;
+  }
+
   if (hidLocal == HID_LOCAL_Japan_Katakana) {
     // Japan
     return keyboard_conv_table_ja[keycode][shift];
@@ -755,8 +769,12 @@ void EspUsbHost::setHIDLocal(hid_local_enum_t code) {
 }
 
 esp_err_t EspUsbHost::submitControl(const uint8_t bmRequestType, const uint8_t bDescriptorIndex, const uint8_t bDescriptorType, const uint16_t wInterfaceNumber, const uint16_t wDescriptorLength) {
-  usb_transfer_t *transfer;
-  usb_host_transfer_alloc(wDescriptorLength + 8 + 1, 0, &transfer);
+  usb_transfer_t *transfer = NULL;
+  esp_err_t allocErr = usb_host_transfer_alloc(wDescriptorLength + 8 + 1, 0, &transfer);
+  if (allocErr != ESP_OK || transfer == NULL) {
+    ESP_LOGI("EspUsbHost", "submitControl: usb_host_transfer_alloc() failed err=%x", allocErr);
+    return allocErr;
+  }
 
   transfer->num_bytes = wDescriptorLength + 8;
   transfer->data_buffer[0] = bmRequestType;
@@ -960,8 +978,6 @@ void EspUsbHost::_onReceiveControl(usb_transfer_t *transfer) {
           printf("(Dial)");
         } else if (usage == 0x38) {
           printf("(Wheel)");
-        } else if (usage == 0x39) {
-          printf("(Hat Switch)");
         } else if (usage == 0x39) {
           printf("(Hat Switch)");
         } else if (usage == 0x3A) {

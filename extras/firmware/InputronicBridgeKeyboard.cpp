@@ -110,24 +110,39 @@ void InputronicBridge::sendKeyboardReport() {
 }
 
 void InputronicBridge::sendKeyboardUart() {
-  Serial.print("TS;K;" + latestReports.keyboard.payload + ";TE\n");
+  static char txBuf[128];
+  // Semicolons inside the payload are escaped to avoid corrupting packet framing.
+  String escaped = latestReports.keyboard.payload;
+  escaped.replace(";", "\\;");
+  snprintf(txBuf, sizeof(txBuf), "TS;K;%s;TE", escaped.c_str());
+  Serial.print(txBuf);
+  Serial.print('\n');
   pulseInterruptPin();
 }
 
 void InputronicBridge::sendKeyboardI2c() {
-  if (currentProtocol != protocolI2c) {
-    return;
+  static char txBuf[128];
+  // Semicolons inside the payload are escaped to avoid corrupting packet framing.
+  String escaped = latestReports.keyboard.payload;
+  escaped.replace(";", "\\;");
+  snprintf(txBuf, sizeof(txBuf), "TS;K;%s;TE", escaped.c_str());
+  if (msgMutex && xSemaphoreTake(msgMutex, pdMS_TO_TICKS(5)) == pdTRUE) {
+    lastI2cMsg = String(txBuf);
+    i2cMsgPending = true;
+    if (!i2cSentHidRaw) i2cMsgSent = false;
+    xSemaphoreGive(msgMutex);
   }
-  lastI2cMsg = String("TS;K;") + latestReports.keyboard.payload + ";TE";
-  i2cMsgPending = true;
-  i2cMsgSent = false;
 }
 
 void InputronicBridge::sendKeyboardSpi() {
-  if (currentProtocol != protocolSpi) {
-    return;
+  static char txBuf[128];
+  // Semicolons inside the payload are escaped to avoid corrupting packet framing.
+  String escaped = latestReports.keyboard.payload;
+  escaped.replace(";", "\\;");
+  snprintf(txBuf, sizeof(txBuf), "TS;K;%s;TE", escaped.c_str());
+  if (msgMutex && xSemaphoreTake(msgMutex, pdMS_TO_TICKS(5)) == pdTRUE) {
+    lastSpiMsg = String(txBuf);
+    spiMsgPending = true;
+    xSemaphoreGive(msgMutex);
   }
-  lastSpiMsg = String("TS;K;") + latestReports.keyboard.payload + ";TE";
-  Serial.print("TS;K;" + latestReports.keyboard.payload + ";TE\n");
-  spiMsgPending = true;
 }

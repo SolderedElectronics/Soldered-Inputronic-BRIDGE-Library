@@ -5,6 +5,7 @@
 #include "driver/i2c.h"
 #include "driver/spi_slave.h"
 #include <usb/usb_host.h>
+#include <freertos/semphr.h>
 #include <map>
 #include <queue>
 #include <vector>
@@ -137,13 +138,16 @@ private:
   static constexpr gpio_num_t spiMosi = GPIO_NUM_11;
   static constexpr int spiBufLen = 128;
   static constexpr spi_host_device_t spiHost = SPI2_HOST;
-  static constexpr gpio_num_t interruptPinI2c = GPIO_NUM_12;
-  static constexpr gpio_num_t interruptPinSpiUart = GPIO_NUM_9;
+  static constexpr gpio_num_t kInterruptPin = GPIO_NUM_21;
+  static constexpr gpio_num_t jumperPin0 = GPIO_NUM_6;
+  static constexpr gpio_num_t jumperPin1 = GPIO_NUM_7;
 
   CommProtocol currentProtocol = protocolI2c;
   bool i2cInitialized = false;
   bool spiInitialized = false;
   uint32_t lastI2cWriteMs = 0;
+  uint32_t i2cMsgSeq = 0;
+  uint32_t i2cSentSeq = 0;
   gpio_num_t currentInterruptPin = GPIO_NUM_NC;
   bool interruptPinInitialized = false;
 
@@ -160,6 +164,7 @@ private:
     bool btnMiddle = false;
     bool btnBackward = false;
     bool btnForward = false;
+    bool btnScrollWheel = false;
   };
 
   struct LatestReports {
@@ -181,12 +186,18 @@ private:
   static String lastI2cMsg;
   static bool i2cMsgPending;
   bool i2cMsgSent = false;
+  bool i2cSentHidRaw = false;
+  uint32_t hidRawSentMs = 0;
+  String lastHidRawI2cMsg;
+  bool hidRawI2cPending = false;
   uint8_t *spiRxBuf = nullptr;
   uint8_t *spiTxBuf = nullptr;
   std::vector<uint8_t> configDescCache;
   String lastHidRawHex;
   static String lastSpiMsg;
   static bool spiMsgPending;
+
+  SemaphoreHandle_t msgMutex = nullptr;
 
   void initI2cSlave();
   void initSpiSlave();

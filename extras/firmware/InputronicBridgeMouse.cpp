@@ -21,6 +21,7 @@ void InputronicBridge::updateMouseReport(const hid_mouse_report_t &report) {
   latestReports.mouse.btnMiddle = report.buttons & MOUSE_BUTTON_MIDDLE;
   latestReports.mouse.btnBackward = report.buttons & MOUSE_BUTTON_BACKWARD;
   latestReports.mouse.btnForward = report.buttons & MOUSE_BUTTON_FORWARD;
+  latestReports.mouse.btnScrollWheel = report.buttons & MOUSE_BUTTON_MIDDLE;
 }
 
 void InputronicBridge::sendMouseReport() {
@@ -32,42 +33,57 @@ void InputronicBridge::sendMouseReport() {
 }
 
 void InputronicBridge::sendMouseUart() {
-  String msg = String("TS;M;") + latestReports.mouse.x + ";" + latestReports.mouse.y + ";" +
-               latestReports.mouse.scroll + ";" +
-               latestReports.mouse.btnLeft + ";" +
-               latestReports.mouse.btnRight + ";" +
-               latestReports.mouse.btnMiddle + ";" +
-               latestReports.mouse.btnBackward + ";" +
-               latestReports.mouse.btnForward + ";TE\n";
-  Serial.print(msg);
+  static char txBuf[128];
+  snprintf(txBuf, sizeof(txBuf), "TS;M;%d;%d;%d;%d;%d;%d;%d;%d;%d;TE",
+           (int)latestReports.mouse.x,
+           (int)latestReports.mouse.y,
+           (int)latestReports.mouse.scroll,
+           (int)latestReports.mouse.btnLeft,
+           (int)latestReports.mouse.btnRight,
+           (int)latestReports.mouse.btnMiddle,
+           (int)latestReports.mouse.btnBackward,
+           (int)latestReports.mouse.btnForward,
+           (int)latestReports.mouse.btnScrollWheel);
+  Serial.print(txBuf);
+  Serial.print('\n');
   pulseInterruptPin();
 }
 
 void InputronicBridge::sendMouseI2c() {
-  if (currentProtocol != protocolI2c) {
-    return;
+  static char txBuf[128];
+  snprintf(txBuf, sizeof(txBuf), "TS;M;%d;%d;%d;%d;%d;%d;%d;%d;%d;TE",
+           (int)latestReports.mouse.x,
+           (int)latestReports.mouse.y,
+           (int)latestReports.mouse.scroll,
+           (int)latestReports.mouse.btnLeft,
+           (int)latestReports.mouse.btnRight,
+           (int)latestReports.mouse.btnMiddle,
+           (int)latestReports.mouse.btnBackward,
+           (int)latestReports.mouse.btnForward,
+           (int)latestReports.mouse.btnScrollWheel);
+  if (msgMutex && xSemaphoreTake(msgMutex, pdMS_TO_TICKS(5)) == pdTRUE) {
+    lastI2cMsg = String(txBuf);
+    i2cMsgPending = true;
+    if (!i2cSentHidRaw) i2cMsgSent = false;
+    xSemaphoreGive(msgMutex);
   }
-  lastI2cMsg = String("TS;M;") + latestReports.mouse.x + ";" + latestReports.mouse.y + ";" +
-               latestReports.mouse.scroll + ";" +
-               latestReports.mouse.btnLeft + ";" +
-               latestReports.mouse.btnRight + ";" +
-               latestReports.mouse.btnMiddle + ";" +
-               latestReports.mouse.btnBackward + ";" +
-               latestReports.mouse.btnForward + ";TE";
-  i2cMsgPending = true;
-  i2cMsgSent = false;
 }
 
 void InputronicBridge::sendMouseSpi() {
-  if (currentProtocol != protocolSpi) {
-    return;
+  static char txBuf[128];
+  snprintf(txBuf, sizeof(txBuf), "TS;M;%d;%d;%d;%d;%d;%d;%d;%d;%d;TE",
+           (int)latestReports.mouse.x,
+           (int)latestReports.mouse.y,
+           (int)latestReports.mouse.scroll,
+           (int)latestReports.mouse.btnLeft,
+           (int)latestReports.mouse.btnRight,
+           (int)latestReports.mouse.btnMiddle,
+           (int)latestReports.mouse.btnBackward,
+           (int)latestReports.mouse.btnForward,
+           (int)latestReports.mouse.btnScrollWheel);
+  if (msgMutex && xSemaphoreTake(msgMutex, pdMS_TO_TICKS(5)) == pdTRUE) {
+    lastSpiMsg = String(txBuf);
+    spiMsgPending = true;
+    xSemaphoreGive(msgMutex);
   }
-  lastSpiMsg = String("TS;M;") + latestReports.mouse.x + ";" + latestReports.mouse.y + ";" +
-               latestReports.mouse.scroll + ";" +
-               latestReports.mouse.btnLeft + ";" +
-               latestReports.mouse.btnRight + ";" +
-               latestReports.mouse.btnMiddle + ";" +
-               latestReports.mouse.btnBackward + ";" +
-               latestReports.mouse.btnForward + ";TE";
-  spiMsgPending = true;
 }

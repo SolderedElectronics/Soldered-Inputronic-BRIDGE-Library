@@ -1,6 +1,5 @@
 #include "InputronicBridge.h"
 #include "show_desc.hpp"
-#include "usbhhelp.hpp"
 #include <esp_heap_caps.h>
 
 String InputronicBridge::lastI2cMsg = "";
@@ -14,6 +13,33 @@ InputronicBridge &InputronicBridge::instance() {
 }
 
 void InputronicBridge::begin() {
+  if (msgMutex == nullptr) {
+    msgMutex = xSemaphoreCreateMutex();
+  }
+
+  gpio_set_direction(jumperPin0, GPIO_MODE_INPUT);
+  gpio_set_pull_mode(jumperPin0, GPIO_PULLDOWN_ONLY);
+  gpio_set_direction(jumperPin1, GPIO_MODE_INPUT);
+  gpio_set_pull_mode(jumperPin1, GPIO_PULLDOWN_ONLY);
+
+  bool j0 = gpio_get_level(jumperPin0);
+  bool j1 = gpio_get_level(jumperPin1);
+  gpio_set_pull_mode(jumperPin0, GPIO_FLOATING);
+  gpio_set_pull_mode(jumperPin1, GPIO_FLOATING);
+
+  if (!j0 && !j1) {
+    currentProtocol = protocolI2c;
+    Serial.println("Set to I2C");
+  } else if (j0 && j1) {
+    currentProtocol = protocolSpi;
+    Serial.println("Set to SPI");
+  } else {
+    currentProtocol = protocolUart;
+    Serial.println("Set to UART");
+  }
+
+  setCpuFrequencyMhz(80);
+
   EspUsbHost::begin();
 
   if (currentProtocol == protocolI2c && !i2cInitialized) {
@@ -40,11 +66,31 @@ void InputronicBridge::task() {
   EspUsbHost::task();
   handleHotplug();
 
+  if (!deviceConnected) {
+    vTaskDelay(pdMS_TO_TICKS(10));
+    return;
+  }
+
   if (currentProtocol == protocolI2c) {
     handleI2cTransaction();
   } else if (currentProtocol == protocolSpi && spiInitialized) {
     handleSpiTransaction();
     vTaskDelay(1);
+  } else if (currentProtocol == protocolUart) {
+    static String uartRxBuf;
+    while (Serial.available()) {
+      char c = Serial.read();
+      if (c == '\n') {
+        uartRxBuf.trim();
+        if (uartRxBuf == "PING") {
+          Serial.print("TS;PONG;TE\n");
+          pulseInterruptPin();
+        }
+        uartRxBuf = "";
+      } else {
+        uartRxBuf += c;
+      }
+    }
   }
 }
 
@@ -90,15 +136,26 @@ String InputronicBridge::buildHidRawMessage() {
 
 void InputronicBridge::updateLastHidRaw(uint8_t *data, size_t len) {
   if (!data || len == 0) {
-    lastHidRawHex = "";
     return;
   }
-  lastHidRawHex = toHexString(data, len);
-  if (currentProtocol == protocolUart) {
-    String msg = buildHidRawMessage();
-    if (!msg.isEmpty()) {
-      Serial.print(msg + "\n");
+  String hex = toHexString(data, len);
+  const size_t maxHexLen = 100;
+  if (hex.length() > maxHexLen) {
+    hex = hex.substring(0, maxHexLen);
+  }
+  String msg = String("TS;HIDRAW;") + hex + ";TE";
+  if (msgMutex && xSemaphoreTake(msgMutex, pdMS_TO_TICKS(5)) == pdTRUE) {
+    lastHidRawHex = hex;
+    if (currentProtocol == protocolI2c) {
+      lastHidRawI2cMsg = msg;
+      hidRawI2cPending = true;
     }
+    xSemaphoreGive(msgMutex);
+  }
+  if (currentProtocol == protocolUart) {
+    Serial.print(msg);
+    Serial.print('\n');
+    pulseInterruptPin();
   }
 }
 
@@ -110,8 +167,10 @@ void InputronicBridge::onConfig(const uint8_t bDescriptorType, const uint8_t *p)
       {
         const usb_config_desc_t *config_desc = (const usb_config_desc_t *)p;
         configDescCache.clear();
-        if (config_desc && config_desc->wTotalLength > 0) {
+          if (config_desc && config_desc->wTotalLength > 0 && config_desc->wTotalLength <= 4096) {
           configDescCache.insert(configDescCache.end(), config_desc->val, config_desc->val + config_desc->wTotalLength);
+        } else if (config_desc && config_desc->wTotalLength > 4096) {
+          ESP_LOGI("InputronicBridge", "onConfig: wTotalLength=%d exceeds limit, skipping cache", config_desc->wTotalLength);
         }
       }
       show_config_desc(p);
@@ -193,16 +252,11 @@ void InputronicBridge::initSpiSlave() {
 }
 
 void InputronicBridge::initInterruptPin() {
-  gpio_num_t pin = GPIO_NUM_NC;
-
-  if (currentProtocol == protocolI2c) {
-    pin = interruptPinI2c;
-  } else if (currentProtocol == protocolSpi || currentProtocol == protocolUart) {
-    pin = interruptPinSpiUart;
-  }
+  gpio_num_t pin = kInterruptPin;
 
   if (pin != GPIO_NUM_NC && pin != currentInterruptPin) {
     if (interruptPinInitialized && currentInterruptPin != GPIO_NUM_NC) {
+      gpio_hold_dis(currentInterruptPin);
       gpio_reset_pin(currentInterruptPin);
     }
 
@@ -215,6 +269,7 @@ void InputronicBridge::initInterruptPin() {
     gpio_config(&io_conf);
 
     gpio_set_level(pin, 1);
+    gpio_hold_en(pin);
 
     currentInterruptPin = pin;
     interruptPinInitialized = true;
@@ -226,71 +281,131 @@ void InputronicBridge::pulseInterruptPin() {
     return;
   }
 
+  gpio_hold_dis(currentInterruptPin);
   gpio_set_level(currentInterruptPin, 0);
   delayMicroseconds(20);
   gpio_set_level(currentInterruptPin, 1);
+  gpio_hold_en(currentInterruptPin);
 }
 
 void InputronicBridge::handleI2cTransaction() {
-  uint8_t rxBuf[i2cBufLen] = {0};
+  static uint8_t rxBuf[i2cBufLen];
 
   int bytesRead = i2c_slave_read_buffer(i2cPort, rxBuf, i2cBufLen, 0);
   if (bytesRead > 0) {
+    if (bytesRead < i2cBufLen) {
+      memset(rxBuf + bytesRead, 0, i2cBufLen - bytesRead);
+    }
     String received;
     for (int i = 0; i < bytesRead; i++) {
       received += static_cast<char>(rxBuf[i]);
     }
     received.trim();
 
-    if (received == "PING") {
-      lastI2cMsg = "TS;PONG;TE";
-      i2cMsgPending = true;
-      i2cMsgSent = false;
-    } else if (received == "REQ:DESC") {
-      lastI2cMsg = buildDescriptorMessage();
-      i2cMsgPending = true;
-      i2cMsgSent = false;
-    } else if (received == "REQ:HIDRAW") {
-      lastI2cMsg = buildHidRawMessage();
-      i2cMsgPending = true;
-      i2cMsgSent = false;
-    } else if (received == "ACK") {
-      lastI2cMsg.clear();
-      i2cMsgPending = false;
-      i2cMsgSent = false;
-      return;
+    if (msgMutex && xSemaphoreTake(msgMutex, pdMS_TO_TICKS(5)) == pdTRUE) {
+      if (received == "PING") {
+        lastI2cMsg = "TS;PONG;TE";
+        i2cMsgPending = true;
+        if (!i2cSentHidRaw) i2cMsgSent = false;
+      } else if (received == "REQ:DESC") {
+        lastI2cMsg = buildDescriptorMessage();
+        i2cMsgPending = true;
+        if (!i2cSentHidRaw) i2cMsgSent = false;
+      } else if (received == "REQ:HIDRAW") {
+        String hidMsg = buildHidRawMessage();
+        if (!hidMsg.isEmpty()) {
+          lastI2cMsg = hidMsg;
+          i2cMsgPending = true;
+          if (!i2cSentHidRaw) i2cMsgSent = false;
+        }
+      } else if (received == "ACK") {
+        if (i2cSentHidRaw) {
+          // ACK is for the HIDRAW channel — don't disturb Channel A
+          i2cMsgSent = false;
+          i2cSentHidRaw = false;
+        } else {
+          lastI2cMsg.clear();
+          i2cMsgPending = false;
+          i2cMsgSent = false;
+        }
+        xSemaphoreGive(msgMutex);
+        return;
+      }
+      xSemaphoreGive(msgMutex);
     }
   }
 
-  if (!i2cMsgPending || lastI2cMsg.isEmpty()) {
+  bool pending = false;
+  bool sent = false;
+  String msgSnapshot;
+  bool isHidRawSend = false;
+
+  if (msgMutex && xSemaphoreTake(msgMutex, pdMS_TO_TICKS(5)) == pdTRUE) {
+    // HIDRAW ACK timeout: unstick if master never responded
+    if (i2cSentHidRaw && hidRawSentMs > 0 && (millis() - hidRawSentMs > 200)) {
+      i2cMsgSent = false;
+      i2cSentHidRaw = false;
+    }
+    pending = i2cMsgPending;
+    sent = i2cMsgSent;
+    // Promote HIDRAW when Channel A is idle, or when starved >10ms by mouse events.
+    // Never preempt a keyboard report — keyboard latency is perceptible.
+    bool channelAIsMouse = lastI2cMsg.startsWith("TS;M;");
+    bool hidRawStarved = hidRawI2cPending && !lastHidRawI2cMsg.isEmpty() &&
+                         !sent && channelAIsMouse && (millis() - hidRawSentMs) > 10;
+    if (hidRawI2cPending && !lastHidRawI2cMsg.isEmpty() &&
+        ((!pending && !sent) || hidRawStarved)) {
+      msgSnapshot = lastHidRawI2cMsg;
+      hidRawI2cPending = false;
+      isHidRawSend = true;
+      pending = true;
+      sent = false;
+    } else {
+      msgSnapshot = lastI2cMsg;
+    }
+    xSemaphoreGive(msgMutex);
+  }
+
+  if (!pending || msgSnapshot.isEmpty()) {
     return;
   }
 
-  if (i2cMsgSent) {
+  if (sent) {
     return;
   }
 
   uint32_t now = millis();
-  if (now - lastI2cWriteMs < 5) {
+  if (now - lastI2cWriteMs < 2) {
     return;
   }
   lastI2cWriteMs = now;
 
   uint8_t txBuf[i2cBufLen] = {0};
-  uint8_t len = lastI2cMsg.length();
+  uint8_t len = msgSnapshot.length();
   if (len > i2cBufLen - 1) {
     len = i2cBufLen - 1;
   }
 
   txBuf[0] = len;
-  memcpy(&txBuf[1], lastI2cMsg.c_str(), len);
+  memcpy(&txBuf[1], msgSnapshot.c_str(), len);
 
   int written = i2c_slave_write_buffer(i2cPort, txBuf, len + 1, 0);
   if (written > 0) {
-    i2cMsgSent = true;
+    if (msgMutex && xSemaphoreTake(msgMutex, pdMS_TO_TICKS(5)) == pdTRUE) {
+      i2cMsgSent = true;
+      i2cSentHidRaw = isHidRawSend;
+      xSemaphoreGive(msgMutex);
+    }
+    if (isHidRawSend) {
+      hidRawSentMs = millis();
+    }
     pulseInterruptPin();
-  } else {
-    // Buffer full or write failed — leave pending for next attempt
+  } else if (isHidRawSend) {
+    // Write failed — restore pending so it retries next cycle
+    if (msgMutex && xSemaphoreTake(msgMutex, pdMS_TO_TICKS(5)) == pdTRUE) {
+      hidRawI2cPending = true;
+      xSemaphoreGive(msgMutex);
+    }
   }
 }
 
@@ -321,11 +436,19 @@ void InputronicBridge::handleSpiTransaction() {
     return;
   }
 
+  bool pending = false;
+  String msgSnapshot;
+  if (msgMutex && xSemaphoreTake(msgMutex, pdMS_TO_TICKS(5)) == pdTRUE) {
+    pending = spiMsgPending;
+    msgSnapshot = lastSpiMsg;
+    xSemaphoreGive(msgMutex);
+  }
+
   // In interrupt mode, skip idle transactions to prevent stale empty
   // transfers from sitting in the SPI hardware queue.  Without this,
   // the master's next transfer after an interrupt serves the old empty
   // transaction instead of the new one carrying data ("trailing by one").
-  if (interruptPinInitialized && !spiMsgPending) {
+  if (interruptPinInitialized && !pending) {
     return;
   }
 
@@ -333,13 +456,13 @@ void InputronicBridge::handleSpiTransaction() {
   memset(spiTxBuf, 0, spiBufLen);
 
   bool sentThisTransaction = false;
-  if (spiMsgPending && !lastSpiMsg.isEmpty()) {
-    uint8_t len = lastSpiMsg.length();
+  if (pending && !msgSnapshot.isEmpty()) {
+    uint8_t len = msgSnapshot.length();
     if (len > spiBufLen - 1) {
       len = spiBufLen - 1;
     }
     spiTxBuf[0] = len;
-    memcpy(&spiTxBuf[1], lastSpiMsg.c_str(), len);
+    memcpy(&spiTxBuf[1], msgSnapshot.c_str(), len);
     sentThisTransaction = true;
   }
 
@@ -362,24 +485,33 @@ void InputronicBridge::handleSpiTransaction() {
   if (err == ESP_OK) {
     String received = extractSpiCommand(spiRxBuf, spiBufLen);
     if (received.length() > 0) {
-      if (received == "PING") {
-        lastSpiMsg = "TS;PONG;TE";
-        spiMsgPending = true;
-      } else if (received == "REQ:DESC") {
-        lastSpiMsg = buildDescriptorMessage();
-        spiMsgPending = true;
-      } else if (received == "REQ:HIDRAW") {
-        lastSpiMsg = buildHidRawMessage();
-        spiMsgPending = true;
-      } else if (received == "ACK") {
-        lastSpiMsg.clear();
-        spiMsgPending = false;
+      if (msgMutex && xSemaphoreTake(msgMutex, pdMS_TO_TICKS(5)) == pdTRUE) {
+        if (received == "PING") {
+          lastSpiMsg = "TS;PONG;TE";
+          spiMsgPending = true;
+        } else if (received == "REQ:DESC") {
+          lastSpiMsg = buildDescriptorMessage();
+          spiMsgPending = true;
+        } else if (received == "REQ:HIDRAW") {
+          String hidMsg = buildHidRawMessage();
+          if (!hidMsg.isEmpty()) {
+            lastSpiMsg = hidMsg;
+            spiMsgPending = true;
+          }
+        } else if (received == "ACK") {
+          lastSpiMsg.clear();
+          spiMsgPending = false;
+        }
+        xSemaphoreGive(msgMutex);
       }
     }
   }
   if (sentThisTransaction) {
-    spiMsgPending = false;
-    lastSpiMsg.clear();
+    if (msgMutex && xSemaphoreTake(msgMutex, pdMS_TO_TICKS(5)) == pdTRUE) {
+      spiMsgPending = false;
+      lastSpiMsg.clear();
+      xSemaphoreGive(msgMutex);
+    }
   }
 }
 
@@ -423,10 +555,11 @@ void InputronicBridge::showConfigDescFull(const usb_config_desc_t *configDesc) {
 }
 
 void InputronicBridge::handleHotplug() {
-  if (xTaskGetTickCount() - lastHotplugCheck < pdMS_TO_TICKS(100)) {
+  TickType_t now = xTaskGetTickCount();
+  if (now - lastHotplugCheck < pdMS_TO_TICKS(100)) {
     return;
   }
-  lastHotplugCheck = xTaskGetTickCount();
+  lastHotplugCheck = now;
 
   uint8_t addrList[8] = {0};
   int addrCount = 0;
@@ -435,9 +568,10 @@ void InputronicBridge::handleHotplug() {
   if (err == ESP_OK) {
     if (!deviceConnected && addrCount > 0) {
       deviceConnected = true;
-      ;
+      setCpuFrequencyMhz(240);
     } else if (deviceConnected && addrCount == 0) {
       deviceConnected = false;
+      setCpuFrequencyMhz(80);
       resetUsbHost();
     }
   }
@@ -449,7 +583,12 @@ void InputronicBridge::resetUsbHost() {
   configDescCache.clear();
   lastHidRawHex.clear();
 
-  esp_err_t err = usb_host_uninstall();
+  esp_err_t err = usb_host_client_deregister(clientHandle);
+  if (err != ESP_OK) {
+    ESP_LOGI("InputronicBridge", "usb_host_client_deregister() err=%x", err);
+  }
+
+  err = usb_host_uninstall();
   if (err == ESP_OK) {
     isMidi = false;
     isMidiReady = false;
@@ -457,7 +596,13 @@ void InputronicBridge::resetUsbHost() {
     for (auto &in : midiIn) {
       in = nullptr;
     }
-    usbh_setup(showConfigDescFullStatic);
+    // Reset transfer / interface bookkeeping before re-init
+    usbTransferSize = 0;
+    usbInterfaceSize = 0;
+    isReady = false;
+    EspUsbHost::begin();
+  } else {
+    ESP_LOGI("InputronicBridge", "usb_host_uninstall() err=%x", err);
   }
 }
 
