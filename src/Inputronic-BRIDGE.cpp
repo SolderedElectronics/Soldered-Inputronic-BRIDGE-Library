@@ -121,7 +121,8 @@ void InputronicParser::requestHidRawOnce()
 void InputronicParser::setHidRawPolling(bool enabled)
 {
     pollHidRawEnabled = enabled;
-    expectingHidRawOnly = enabled;
+    // Continuous HIDRAW polling should not suppress parsed mouse/keyboard events.
+    expectingHidRawOnly = false;
 }
 
 /**
@@ -171,7 +172,7 @@ bool InputronicParser::checkConnection()
             {
                 return false;
             }
-            for (int attempt = 0; attempt < 3; attempt++)
+            for (int attempt = 0; attempt < 10; attempt++)
             {
                 i2cPort->beginTransmission(i2cSlaveAddr);
                 i2cPort->write((const uint8_t *)"PING", 4);
@@ -223,49 +224,59 @@ bool InputronicParser::checkConnection()
             {
                 return false;
             }
-            uint8_t txBuf[SPI_MAX_LEN] = {0};
-            uint8_t rxBuf[SPI_MAX_LEN] = {0};
-
-            // Transaction 1: send PING
-            memcpy(txBuf, "PING", 4);
-            spiPort->beginTransaction(spiSettings);
-            digitalWrite(spiCsPin, LOW);
-            spiPort->transferBytes(txBuf, rxBuf, SPI_MAX_LEN);
-            digitalWrite(spiCsPin, HIGH);
-            spiPort->endTransaction();
-
-            // Give firmware time to process PING and queue PONG
-            delay(50);
-
-            // Transaction 2: read PONG
-            memset(txBuf, 0, SPI_MAX_LEN);
-            memset(rxBuf, 0, SPI_MAX_LEN);
-            spiPort->beginTransaction(spiSettings);
-            digitalWrite(spiCsPin, LOW);
-            spiPort->transferBytes(txBuf, rxBuf, SPI_MAX_LEN);
-            digitalWrite(spiCsPin, HIGH);
-            spiPort->endTransaction();
-
-            uint8_t payloadLen = rxBuf[0];
-            if (payloadLen > 0 && payloadLen < SPI_MAX_LEN)
+            // Three outer PING attempts to survive cold-start race (slave may not
+            // be in spi_slave_transmit yet when the first PING arrives).
+            for (int attempt = 0; attempt < 3; attempt++)
             {
-                String msg;
-                msg.reserve(payloadLen);
-                for (uint8_t i = 0; i < payloadLen; i++)
+                uint8_t txBuf[SPI_MAX_LEN] = {0};
+                uint8_t rxBuf[SPI_MAX_LEN] = {0};
+
+                memcpy(txBuf, "PING", 4);
+                spiPort->beginTransaction(spiSettings);
+                digitalWrite(spiCsPin, LOW);
+                spiPort->transferBytes(txBuf, rxBuf, SPI_MAX_LEN);
+                digitalWrite(spiCsPin, HIGH);
+                spiPort->endTransaction();
+
+                // Poll for PONG up to 10 times × 50 ms = 500 ms per PING.
+                // The slave keeps PONG in its TX buffer until it receives ACK,
+                // so each read gets a fresh copy even if some reads miss the
+                // slave's spi_slave_transmit window.
+                for (int read = 0; read < 10; read++)
                 {
-                    msg += (char)rxBuf[i + 1];
-                }
-                if (msg == "TS;PONG;TE")
-                {
+                    delay(50);
                     memset(txBuf, 0, SPI_MAX_LEN);
-                    memcpy(txBuf, "ACK", 3);
+                    memset(rxBuf, 0, SPI_MAX_LEN);
                     spiPort->beginTransaction(spiSettings);
                     digitalWrite(spiCsPin, LOW);
                     spiPort->transferBytes(txBuf, rxBuf, SPI_MAX_LEN);
                     digitalWrite(spiCsPin, HIGH);
                     spiPort->endTransaction();
-                    return true;
+
+                    uint8_t payloadLen = rxBuf[0];
+                    if (payloadLen > 0 && payloadLen < SPI_MAX_LEN)
+                    {
+                        String msg;
+                        msg.reserve(payloadLen);
+                        for (uint8_t i = 0; i < payloadLen; i++)
+                        {
+                            msg += (char)rxBuf[i + 1];
+                        }
+                        if (msg == "TS;PONG;TE")
+                        {
+                            memset(txBuf, 0, SPI_MAX_LEN);
+                            memcpy(txBuf, "ACK", 3);
+                            spiPort->beginTransaction(spiSettings);
+                            digitalWrite(spiCsPin, LOW);
+                            spiPort->transferBytes(txBuf, rxBuf, SPI_MAX_LEN);
+                            digitalWrite(spiCsPin, HIGH);
+                            spiPort->endTransaction();
+                            return true;
+                        }
+                    }
                 }
+
+                delay(200);
             }
             return false;
         }
@@ -393,7 +404,9 @@ InputronicParser::EventBundle InputronicParser::pollEvents()
 
         // Each I2C read carries exactly one length-prefixed message.
         // Process it as a standalone unit — no accumulation across reads.
-        bool gotData = false;
+        // ACK any non-empty framed response so the bridge does not stall
+        // waiting for ACK when a frame is truncated or parse-invalid.
+        bool shouldAck = false;
 
         uint8_t rawBuf[MAX_LEN] = {0};
         uint8_t rawLen = 0;
@@ -405,6 +418,10 @@ InputronicParser::EventBundle InputronicParser::pollEvents()
         if (rawLen > 1)
         {
             uint8_t payloadLen = rawBuf[0];
+            if (payloadLen > 0)
+            {
+                shouldAck = true;
+            }
             if (payloadLen > 0 && payloadLen < MAX_LEN && payloadLen <= (rawLen - 1))
             {
                 String msg;
@@ -418,11 +435,10 @@ InputronicParser::EventBundle InputronicParser::pollEvents()
                 {
                     feedLine(msg);
                 }
-                gotData = true;
             }
         }
 
-        if (gotData)
+        if (shouldAck)
         {
             i2cPort->beginTransmission(i2cSlaveAddr);
             i2cPort->write((const uint8_t *)"ACK", 3);
@@ -532,6 +548,7 @@ void InputronicParser::pollSpi()
         }
         spiPendingAck = true;
     }
+        
     if (msg.length() > 0)
     {
         static String spiBuffer = "";
@@ -787,29 +804,47 @@ void InputronicParser::parseMouse(const String &msgIn)
 
     String body = msg.substring(start, end);
 
+    // Fast integer parser for: x;y;scroll;btnL;btnR;btnM;btnB;btnF;btnSW
+    // Avoids `token += c` per character which can significantly slow polling.
     int vals[9] = {0};
     int idx = 0;
-    String token = "";
+    bool inNum = false;
+    bool neg = false;
+    int val = 0;
 
-    for (int i = 0; i < body.length(); i++)
+    const char *s = body.c_str();
+    for (int i = 0; s[i] != '\0' && idx < 9; i++)
     {
-        char c = body[i];
+        char c = s[i];
+        if (c == '-')
+        {
+            neg = true;
+            val = 0;
+            inNum = true;
+            continue;
+        }
+        if (c >= '0' && c <= '9')
+        {
+            val = val * 10 + (c - '0');
+            inNum = true;
+            continue;
+        }
         if (c == ';')
         {
-            if (token.length() > 0 && idx < 9)
+            if (inNum)
             {
-                vals[idx++] = atoi(token.c_str());
-                token = "";
+                vals[idx++] = neg ? -val : val;
+                // Reset for next number
+                inNum = false;
+                neg = false;
+                val = 0;
             }
-        }
-        else
-        {
-            token += c;
+            continue;
         }
     }
-    if (token.length() > 0 && idx < 9)
+    if (inNum && idx < 9)
     {
-        vals[idx++] = atoi(token.c_str());
+        vals[idx++] = neg ? -val : val;
     }
 
     if (idx >= 9)

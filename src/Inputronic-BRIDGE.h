@@ -140,7 +140,7 @@ class InputronicParser
     uint8_t spiCsPin = 10;
     SPISettings spiSettings = SPISettings(1000000, MSBFIRST, SPI_MODE0);
     bool spiInitialized = false;
-    static constexpr uint8_t SPI_MAX_LEN = 128;
+    static constexpr uint8_t SPI_MAX_LEN = 64;
     bool spiPendingAck = false;
     uint32_t spiFrameStartMs = 0;
     String spiPendingCommand;

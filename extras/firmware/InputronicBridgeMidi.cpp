@@ -1,13 +1,30 @@
+/**
+ **************************************************
+ *
+ * @file        InputronicBridgeMidi.cpp
+ * @brief       MIDI USB event handling for the Inputronic BRIDGE firmware.
+ *              Detects MIDI streaming interfaces in the USB config descriptor,
+ *              allocates bulk IN/OUT transfers, and forwards MIDI events to the
+ *              active transport as TS;MIDI;b1;b2;b3|...;TE frames.
+ *
+ *
+ * @copyright GNU General Public License v3.0
+ * @authors   Josip Šimun Kuči @ soldered.com
+ ***************************************************/
+
 #include "InputronicBridge.h"
 
+/**
+ * @brief                   sendMidiReport function formats a three-byte MIDI
+ *                          event as a TS;MIDI;HH;HH;HH;TE frame and routes it
+ *                          to the active transport.
+ */
 void InputronicBridge::sendMidiReport(uint8_t b1, uint8_t b2, uint8_t b3) {
   static char txBuf[40];
   snprintf(txBuf, sizeof(txBuf), "TS;MIDI;%02X;%02X;%02X;TE", b1, b2, b3);
   if (currentProtocol == protocolI2c) {
     if (msgMutex && xSemaphoreTake(msgMutex, pdMS_TO_TICKS(5)) == pdTRUE) {
-      lastI2cMsg = String(txBuf);
-      i2cMsgPending = true;
-      i2cMsgSent = false;
+      enqueueI2cChannelAMessageLocked(String(txBuf), false);
       xSemaphoreGive(msgMutex);
     }
   } else if (currentProtocol == protocolSpi) {
@@ -23,6 +40,14 @@ void InputronicBridge::sendMidiReport(uint8_t b1, uint8_t b2, uint8_t b3) {
   }
 }
 
+/**
+ * @brief                   midiTransferCallback function is the USB transfer
+ *                          completion callback for MIDI bulk IN endpoints.
+ *                          It iterates the 4-byte USB MIDI packets in the
+ *                          transfer buffer, assembles all events in one
+ *                          TS;MIDI;b1;b2;b3|...;TE frame, routes the frame to
+ *                          the active transport, and resubmits the transfer.
+ */
 void InputronicBridge::midiTransferCallback(usb_transfer_t *transfer) {
   auto &self = InputronicBridge::instance();
 
@@ -78,9 +103,7 @@ void InputronicBridge::midiTransferCallback(usb_transfer_t *transfer) {
 
         if (self.currentProtocol == protocolI2c) {
           if (self.msgMutex && xSemaphoreTake(self.msgMutex, pdMS_TO_TICKS(5)) == pdTRUE) {
-            self.lastI2cMsg = String(packetBuf);
-            self.i2cMsgPending = true;
-            self.i2cMsgSent = false;
+            self.enqueueI2cChannelAMessageLocked(String(packetBuf), false);
             xSemaphoreGive(self.msgMutex);
           }
         } else if (self.currentProtocol == protocolSpi) {
@@ -101,6 +124,12 @@ void InputronicBridge::midiTransferCallback(usb_transfer_t *transfer) {
   }
 }
 
+/**
+ * @brief                   checkInterfaceDescMidi function inspects a USB
+ *                          interface descriptor and sets the isMidi flag when
+ *                          the interface matches AudioControl subclass 0x03
+ *                          (MIDI Streaming) with protocol 0x00.
+ */
 void InputronicBridge::checkInterfaceDescMidi(const void *p) {
   if (!p) {
     return;
@@ -111,6 +140,13 @@ void InputronicBridge::checkInterfaceDescMidi(const void *p) {
   }
 }
 
+/**
+ * @brief                   prepareEndpoints function allocates USB host
+ *                          transfers for a MIDI bulk endpoint and immediately
+ *                          submits the IN transfers to begin receiving MIDI
+ *                          data, then sets isMidiReady when both IN and OUT
+ *                          endpoints are configured.
+ */
 void InputronicBridge::prepareEndpoints(const void *p) {
   if (!p) {
     return;

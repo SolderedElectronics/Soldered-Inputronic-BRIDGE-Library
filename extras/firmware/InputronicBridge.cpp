@@ -1,3 +1,17 @@
+/**
+ **************************************************
+ *
+ * @file        InputronicBridge.cpp
+ * @brief       Core firmware source for the Inputronic BRIDGE module.
+ *              Implements transport initialisation (I2C slave, SPI slave,
+ *              interrupt pin), the I2C/SPI transaction handlers, USB hotplug
+ *              detection, USB config descriptor parsing, and the HIDRAW helper.
+ *
+ *
+ * @copyright GNU General Public License v3.0
+ * @authors   Josip Šimun Kuči @ soldered.com
+ ***************************************************/
+
 #include "InputronicBridge.h"
 #include "show_desc.hpp"
 #include <esp_heap_caps.h>
@@ -7,11 +21,20 @@ bool InputronicBridge::i2cMsgPending = false;
 String InputronicBridge::lastSpiMsg = "";
 bool InputronicBridge::spiMsgPending = false;
 
+/**
+ * @brief                   instance function returns the global singleton.
+ */
 InputronicBridge &InputronicBridge::instance() {
   static InputronicBridge instance;
   return instance;
 }
 
+/**
+ * @brief                   begin function reads the protocol jumpers, starts
+ *                          EspUsbHost, and initialises the selected transport
+ *                          and interrupt pin. CPU is throttled to 80 MHz while
+ *                          no USB device is connected.
+ */
 void InputronicBridge::begin() {
   if (msgMutex == nullptr) {
     msgMutex = xSemaphoreCreateMutex();
@@ -37,10 +60,11 @@ void InputronicBridge::begin() {
     currentProtocol = protocolUart;
     Serial.println("Set to UART");
   }
-
   setCpuFrequencyMhz(80);
 
+  Serial.println("[INIT] EspUsbHost::begin...");
   EspUsbHost::begin();
+  Serial.println("[INIT] EspUsbHost::begin done");
 
   if (currentProtocol == protocolI2c && !i2cInitialized) {
     initI2cSlave();
@@ -49,8 +73,13 @@ void InputronicBridge::begin() {
   }
 
   initInterruptPin();
+  Serial.println("[INIT] begin() complete");
 }
 
+/**
+ * @brief                   setProtocol function switches to the specified
+ *                          transport at runtime, initialising it if needed.
+ */
 void InputronicBridge::setProtocol(CommProtocol protocol) {
   currentProtocol = protocol;
   if (currentProtocol == protocolI2c && !i2cInitialized) {
@@ -62,20 +91,17 @@ void InputronicBridge::setProtocol(CommProtocol protocol) {
   initInterruptPin();
 }
 
+/**
+ * @brief                   task function drives USB host processing, hotplug
+ *                          detection, and the active transport handler. Call
+ *                          continuously from the Arduino loop.
+ */
 void InputronicBridge::task() {
   EspUsbHost::task();
   handleHotplug();
 
-  if (!deviceConnected) {
-    vTaskDelay(pdMS_TO_TICKS(10));
-    return;
-  }
-
   if (currentProtocol == protocolI2c) {
     handleI2cTransaction();
-  } else if (currentProtocol == protocolSpi && spiInitialized) {
-    handleSpiTransaction();
-    vTaskDelay(1);
   } else if (currentProtocol == protocolUart) {
     static String uartRxBuf;
     while (Serial.available()) {
@@ -92,12 +118,26 @@ void InputronicBridge::task() {
       }
     }
   }
+
+  if (!deviceConnected) {
+    vTaskDelay(pdMS_TO_TICKS(10));
+    return;
+  }
 }
 
+/**
+ * @brief                   showConfigDescFullStatic function is the static
+ *                          trampoline used by EspUsbHost to deliver the USB
+ *                          configuration descriptor to the singleton instance.
+ */
 void InputronicBridge::showConfigDescFullStatic(const usb_config_desc_t *configDesc) {
   instance().showConfigDescFull(configDesc);
 }
 
+/**
+ * @brief                   toHexString function converts a byte array to an
+ *                          upper-case hexadecimal string (2 chars per byte).
+ */
 static String toHexString(const uint8_t *data, size_t len) {
   String out;
   out.reserve(len * 2);
@@ -110,11 +150,17 @@ static String toHexString(const uint8_t *data, size_t len) {
   return out;
 }
 
+/**
+ * @brief                   buildDescriptorMessage function formats the cached
+ *                          USB configuration descriptor as a TS;DESC;...;TE
+ *                          frame (first 50 bytes, hex-encoded).
+ */
 String InputronicBridge::buildDescriptorMessage() {
   if (configDescCache.empty()) {
     return "TS;DESC;EMPTY;TE";
   }
-  size_t maxBytes = 50;
+  // 25 raw bytes → 50 hex chars → total frame = 1+8+50+3 = 62 bytes ≤ spiBufLen(64).
+  size_t maxBytes = 25;
   if (configDescCache.size() < maxBytes) {
     maxBytes = configDescCache.size();
   }
@@ -122,11 +168,18 @@ String InputronicBridge::buildDescriptorMessage() {
   return String("TS;DESC;") + hex + ";TE";
 }
 
+/**
+ * @brief                   buildHidRawMessage function formats the most recent
+ *                          raw HID report as a TS;HIDRAW;...;TE frame, capped
+ *                          at 34 hex chars (17 bytes) to fit one 48-byte I2C
+ *                          transfer.
+ */
 String InputronicBridge::buildHidRawMessage() {
   if (lastHidRawHex.isEmpty()) {
     return "";
   }
-  const size_t maxHexLen = 100;
+  // Same 34-char limit as updateLastHidRaw — must fit in one 48-byte transfer.
+  const size_t maxHexLen = 34;
   String hex = lastHidRawHex;
   if (hex.length() > maxHexLen) {
     hex = hex.substring(0, maxHexLen);
@@ -134,12 +187,23 @@ String InputronicBridge::buildHidRawMessage() {
   return String("TS;HIDRAW;") + hex + ";TE";
 }
 
+/**
+ * @brief                   updateLastHidRaw function stores the latest raw HID
+ *                          report for later delivery on explicit REQ:HIDRAW.
+ *                          For UART it transmits immediately; for I2C and SPI
+ *                          the data is cached and sent only on host request to
+ *                          avoid polluting the TX ring buffer.
+ */
 void InputronicBridge::updateLastHidRaw(uint8_t *data, size_t len) {
   if (!data || len == 0) {
     return;
   }
   String hex = toHexString(data, len);
-  const size_t maxHexLen = 100;
+  // Limit to 34 hex chars (17 raw bytes) so the full HIDRAW message fits in
+  // one 48-byte I2C transfer: 1 (len) + 10 ("TS;HIDRAW;") + 34 + 3 (";TE") = 48.
+  // Exceeding this leaves leftover bytes in the ESP32 I2C slave TX ring buffer
+  // which corrupt subsequent Channel A (keyboard/mouse) transfers.
+  const size_t maxHexLen = 34;
   if (hex.length() > maxHexLen) {
     hex = hex.substring(0, maxHexLen);
   }
@@ -148,7 +212,10 @@ void InputronicBridge::updateLastHidRaw(uint8_t *data, size_t len) {
     lastHidRawHex = hex;
     if (currentProtocol == protocolI2c) {
       lastHidRawI2cMsg = msg;
-      hidRawI2cPending = true;
+      // Do NOT set hidRawI2cPending here — proactive HIDRAW would overflow the
+      // 48-byte I2C read window, leaving garbage in the TX ring buffer that
+      // causes the master to ACK stale data and silently drop queued events.
+      // hidRawI2cPending is set only when the host explicitly sends REQ:HIDRAW.
     }
     xSemaphoreGive(msgMutex);
   }
@@ -160,6 +227,12 @@ void InputronicBridge::updateLastHidRaw(uint8_t *data, size_t len) {
 }
 
 
+/**
+ * @brief                   onConfig function is the EspUsbHost callback for
+ *                          each USB descriptor sub-type. It caches the config
+ *                          descriptor, logs interface and endpoint descriptors,
+ *                          and detects MIDI streaming interfaces.
+ */
 void InputronicBridge::onConfig(const uint8_t bDescriptorType, const uint8_t *p) {
   EspUsbHost::onConfig(bDescriptorType, p);
   switch (bDescriptorType) {
@@ -194,6 +267,11 @@ void InputronicBridge::onConfig(const uint8_t bDescriptorType, const uint8_t *p)
   }
 }
 
+/**
+ * @brief                   initI2cSlave function installs the ESP32 I2C slave
+ *                          driver with a 128-byte RX/TX ring buffer on the
+ *                          SDA/SCL pins defined by i2cSda and i2cScl.
+ */
 void InputronicBridge::initI2cSlave() {
   i2c_config_t conf = {};
   conf.sda_io_num = i2cSda;
@@ -210,6 +288,11 @@ void InputronicBridge::initI2cSlave() {
 
 }
 
+/**
+ * @brief                   initSpiSlave function allocates DMA-capable RX/TX
+ *                          buffers and installs the ESP32 SPI slave driver on
+ *                          SPI2_HOST using the pins defined in the header.
+ */
 void InputronicBridge::initSpiSlave() {
   if (currentProtocol != protocolSpi) {
     return;
@@ -245,12 +328,23 @@ void InputronicBridge::initSpiSlave() {
   slvcfg.spics_io_num = spiCs;
   slvcfg.queue_size = 1;
 
-  esp_err_t err = spi_slave_initialize(spiHost, &buscfg, &slvcfg, SPI_DMA_CH_AUTO);
+  esp_err_t err = spi_slave_initialize(spiHost, &buscfg, &slvcfg, SPI_DMA_DISABLED);
   if (err == ESP_OK) {
     spiInitialized = true;
+    Serial.println("[SPI] slave init OK");
+    if (spiTaskHandle == nullptr) {
+      xTaskCreate(spiTaskEntry, "spi_bridge", 4096, this, 3, &spiTaskHandle);
+    }
+  } else {
+    Serial.printf("[SPI] slave init FAILED: 0x%x (%s)\n", err, esp_err_to_name(err));
   }
 }
 
+/**
+ * @brief                   initInterruptPin function configures kInterruptPin
+ *                          as a push-pull output, drives it high, and holds
+ *                          the level across sleep cycles via gpio_hold_en.
+ */
 void InputronicBridge::initInterruptPin() {
   gpio_num_t pin = kInterruptPin;
 
@@ -276,6 +370,11 @@ void InputronicBridge::initInterruptPin() {
   }
 }
 
+/**
+ * @brief                   pulseInterruptPin function briefly drives the
+ *                          interrupt output low (20 µs) and then returns it
+ *                          high so the host MCU's falling-edge ISR fires once.
+ */
 void InputronicBridge::pulseInterruptPin() {
   if (!interruptPinInitialized || currentInterruptPin == GPIO_NUM_NC) {
     return;
@@ -288,6 +387,104 @@ void InputronicBridge::pulseInterruptPin() {
   gpio_hold_en(currentInterruptPin);
 }
 
+/**
+ * @brief                   refreshI2cChannelAFrontLocked function promotes the
+ *                          head of the I2C message queue into lastI2cMsg so the
+ *                          TX section can write it, or clears lastI2cMsg when
+ *                          the queue is empty. Must be called with msgMutex held.
+ */
+void InputronicBridge::refreshI2cChannelAFrontLocked() {
+  if (!i2cMsgQueue.empty()) {
+    lastI2cMsg = i2cMsgQueue.front().payload;
+    i2cMsgPending = true;
+  } else {
+    lastI2cMsg.clear();
+    i2cMsgPending = false;
+  }
+}
+
+/**
+ * @brief                   enqueueI2cChannelAMessageLocked function adds msg
+ *                          to the ordered I2C outbox, coalescing consecutive
+ *                          mouse-movement updates to keep the queue shallow.
+ *                          When the queue is full, the oldest non-critical mouse
+ *                          packet is evicted first; critical events (button
+ *                          changes, scroll) are protected. Must be called with
+ *                          msgMutex held.
+ */
+void InputronicBridge::enqueueI2cChannelAMessageLocked(const String &msg, bool isMouse, bool allowMouseCoalesce,
+                                                       bool isCritical) {
+  if (isMouse && allowMouseCoalesce && !i2cMsgQueue.empty() && i2cMsgQueue.back().isMouse) {
+    // Coalesce consecutive mouse updates while preserving keyboard/MIDI order.
+    i2cMsgQueue.back().payload = msg;
+  } else {
+    if (i2cMsgQueue.size() >= i2cQueueMaxDepth) {
+      // Front packet may already be in-flight waiting for ACK; never drop/reorder it.
+      const bool frontLocked = i2cMsgSent && !i2cSentHidRaw && !i2cMsgQueue.empty();
+      const size_t scanStart = frontLocked ? 1 : 0;
+
+      // Prefer dropping the oldest non-critical mouse movement packet first.
+      size_t dropIdx = i2cMsgQueue.size();
+      for (size_t i = scanStart; i < i2cMsgQueue.size(); i++) {
+        if (i2cMsgQueue[i].isMouse && !i2cMsgQueue[i].isCritical) {
+          dropIdx = i;
+          break;
+        }
+      }
+      if (dropIdx < i2cMsgQueue.size()) {
+        i2cMsgQueue.erase(i2cMsgQueue.begin() + dropIdx);
+      } else {
+        // No preferred drop candidate. Drop the newest non-critical packet if possible.
+        // This preserves ordering and protects the in-flight front packet.
+        size_t tailDropIdx = i2cMsgQueue.size();
+        for (size_t i = i2cMsgQueue.size(); i > scanStart; i--) {
+          size_t idx = i - 1;
+          if (!i2cMsgQueue[idx].isCritical) {
+            tailDropIdx = idx;
+            break;
+          }
+        }
+        if (tailDropIdx < i2cMsgQueue.size()) {
+          i2cMsgQueue.erase(i2cMsgQueue.begin() + tailDropIdx);
+        } else if (!frontLocked && !i2cMsgQueue.empty()) {
+          i2cMsgQueue.pop_front();
+        } else {
+          // Queue is full of critical items and front is locked; keep queue unchanged.
+          // For non-critical new packets, drop the newcomer.
+          if (!isCritical) {
+            return;
+          }
+          // For critical newcomer, replace oldest non-front critical as last resort.
+          if (scanStart < i2cMsgQueue.size()) {
+            i2cMsgQueue.erase(i2cMsgQueue.begin() + scanStart);
+          } else {
+            return;
+          }
+        }
+      }
+    }
+    I2cQueuedMessage queued;
+    queued.payload = msg;
+    queued.isMouse = isMouse;
+    queued.isCritical = isCritical;
+    i2cMsgQueue.push_back(queued);
+  }
+  i2cMsgSeq++;
+  refreshI2cChannelAFrontLocked();
+}
+
+/**
+ * @brief                   handleI2cTransaction function is the main I2C
+ *                          slave pump called every task() iteration. It reads
+ *                          any host command from the RX ring buffer (ACK, PING,
+ *                          REQ:DESC, REQ:HIDRAW), advances the outbox queue on
+ *                          ACK, then writes the next pending message to the TX
+ *                          ring buffer and pulses the interrupt pin.
+ *
+ *                          A minimum 2 ms gap between successive TX writes
+ *                          prevents back-to-back slave buffer writes that can
+ *                          confuse the ESP32 I2C slave hardware.
+ */
 void InputronicBridge::handleI2cTransaction() {
   static uint8_t rxBuf[i2cBufLen];
 
@@ -303,33 +500,36 @@ void InputronicBridge::handleI2cTransaction() {
     received.trim();
 
     if (msgMutex && xSemaphoreTake(msgMutex, pdMS_TO_TICKS(5)) == pdTRUE) {
-      if (received == "PING") {
-        lastI2cMsg = "TS;PONG;TE";
-        i2cMsgPending = true;
-        if (!i2cSentHidRaw) i2cMsgSent = false;
-      } else if (received == "REQ:DESC") {
-        lastI2cMsg = buildDescriptorMessage();
-        i2cMsgPending = true;
-        if (!i2cSentHidRaw) i2cMsgSent = false;
-      } else if (received == "REQ:HIDRAW") {
-        String hidMsg = buildHidRawMessage();
-        if (!hidMsg.isEmpty()) {
-          lastI2cMsg = hidMsg;
-          i2cMsgPending = true;
-          if (!i2cSentHidRaw) i2cMsgSent = false;
-        }
-      } else if (received == "ACK") {
+      // The RX FIFO may contain multiple back-to-back control writes
+      // (e.g. "ACKREQ:HIDRAW"). Parse by token presence, not exact equality.
+      if (received.indexOf("ACK") >= 0 && i2cMsgSent) {
         if (i2cSentHidRaw) {
           // ACK is for the HIDRAW channel — don't disturb Channel A
           i2cMsgSent = false;
           i2cSentHidRaw = false;
         } else {
-          lastI2cMsg.clear();
-          i2cMsgPending = false;
+          if (!i2cMsgQueue.empty()) {
+            i2cMsgQueue.pop_front();
+          }
           i2cMsgSent = false;
+          channelATimeoutRetries = 0;
+          refreshI2cChannelAFrontLocked();
         }
-        xSemaphoreGive(msgMutex);
-        return;
+      }
+      if (received.indexOf("PING") >= 0) {
+        enqueueI2cChannelAMessageLocked("TS;PONG;TE", false);
+      }
+      if (received.indexOf("REQ:DESC") >= 0) {
+        enqueueI2cChannelAMessageLocked(buildDescriptorMessage(), false);
+      }
+      if (received.indexOf("REQ:HIDRAW") >= 0) {
+        String hidMsg = buildHidRawMessage();
+        if (!hidMsg.isEmpty()) {
+          // Keep HIDRAW on its dedicated pending channel so frequent REQ:HIDRAW
+          // polling does not overwrite Channel A mouse/keyboard packets.
+          lastHidRawI2cMsg = hidMsg;
+          hidRawI2cPending = true;
+        }
       }
       xSemaphoreGive(msgMutex);
     }
@@ -341,6 +541,18 @@ void InputronicBridge::handleI2cTransaction() {
   bool isHidRawSend = false;
 
   if (msgMutex && xSemaphoreTake(msgMutex, pdMS_TO_TICKS(5)) == pdTRUE) {
+    // Channel A ACK timeout: avoid permanent stalls on dropped ACKs.
+    if (!i2cSentHidRaw && i2cMsgSent && channelASentMs > 0 && (millis() - channelASentMs > 120)) {
+      i2cMsgSent = false;
+      // Don't let one repeatedly un-ACKed packet stall mouse flow forever.
+      if (++channelATimeoutRetries >= 2) {
+        if (!i2cMsgQueue.empty()) {
+          i2cMsgQueue.pop_front();
+        }
+        channelATimeoutRetries = 0;
+        refreshI2cChannelAFrontLocked();
+      }
+    }
     // HIDRAW ACK timeout: unstick if master never responded
     if (i2cSentHidRaw && hidRawSentMs > 0 && (millis() - hidRawSentMs > 200)) {
       i2cMsgSent = false;
@@ -348,13 +560,14 @@ void InputronicBridge::handleI2cTransaction() {
     }
     pending = i2cMsgPending;
     sent = i2cMsgSent;
-    // Promote HIDRAW when Channel A is idle, or when starved >10ms by mouse events.
-    // Never preempt a keyboard report — keyboard latency is perceptible.
-    bool channelAIsMouse = lastI2cMsg.startsWith("TS;M;");
-    bool hidRawStarved = hidRawI2cPending && !lastHidRawI2cMsg.isEmpty() &&
-                         !sent && channelAIsMouse && (millis() - hidRawSentMs) > 10;
-    if (hidRawI2cPending && !lastHidRawI2cMsg.isEmpty() &&
-        ((!pending && !sent) || hidRawStarved)) {
+    // Serve HIDRAW when Channel A is idle, plus occasional fair-share slots
+    // while Channel A is mouse-heavy so raw polling does not starve.
+    bool allowHidRaw = (!pending && !sent);
+    if (!allowHidRaw && !sent && !i2cMsgQueue.empty() && i2cMsgQueue.front().isMouse &&
+        (millis() - hidRawSentMs) > 12) {
+      allowHidRaw = true;
+    }
+    if (hidRawI2cPending && !lastHidRawI2cMsg.isEmpty() && allowHidRaw) {
       msgSnapshot = lastHidRawI2cMsg;
       hidRawI2cPending = false;
       isHidRawSend = true;
@@ -394,6 +607,10 @@ void InputronicBridge::handleI2cTransaction() {
     if (msgMutex && xSemaphoreTake(msgMutex, pdMS_TO_TICKS(5)) == pdTRUE) {
       i2cMsgSent = true;
       i2cSentHidRaw = isHidRawSend;
+      if (!isHidRawSend) {
+        i2cSentSeq = i2cMsgSeq;
+        channelASentMs = millis();
+      }
       xSemaphoreGive(msgMutex);
     }
     if (isHidRawSend) {
@@ -409,6 +626,11 @@ void InputronicBridge::handleI2cTransaction() {
   }
 }
 
+/**
+ * @brief                   extractSpiCommand function skips leading null bytes
+ *                          in the SPI RX buffer and returns the first non-null,
+ *                          null-terminated, whitespace-trimmed string.
+ */
 String InputronicBridge::extractSpiCommand(const uint8_t *buf, size_t len) {
   if (!buf || len == 0) {
     return "";
@@ -431,8 +653,33 @@ String InputronicBridge::extractSpiCommand(const uint8_t *buf, size_t len) {
   return msg;
 }
 
+/**
+ * @brief                   spiTaskEntry runs handleSpiTransaction in a tight
+ *                          loop. spi_slave_transmit inside handleSpiTransaction
+ *                          blocks (suspending this task) while waiting for the
+ *                          master, giving the Arduino loop full CPU access to
+ *                          call EspUsbHost::task() and fire HID callbacks.
+ */
+void InputronicBridge::spiTaskEntry(void *arg) {
+  InputronicBridge *self = static_cast<InputronicBridge *>(arg);
+  while (true) {
+    self->handleSpiTransaction();
+  }
+}
+
+/**
+ * @brief                   handleSpiTransaction function services one SPI slave
+ *                          cycle. spi_slave_transmit suspends this task for up
+ *                          to 50 ms while waiting for the master, so the
+ *                          FreeRTOS scheduler can run the Arduino loop and USB
+ *                          host daemon. SPI_DMA_DISABLED avoids GDMA channel
+ *                          conflicts with the USB host stack on ESP32-S3.
+ */
 void InputronicBridge::handleSpiTransaction() {
   if (!spiInitialized) {
+    vTaskDelay(pdMS_TO_TICKS(100));
+    spi_slave_free(spiHost);
+    initSpiSlave();
     return;
   }
 
@@ -444,26 +691,14 @@ void InputronicBridge::handleSpiTransaction() {
     xSemaphoreGive(msgMutex);
   }
 
-  // In interrupt mode, skip idle transactions to prevent stale empty
-  // transfers from sitting in the SPI hardware queue.  Without this,
-  // the master's next transfer after an interrupt serves the old empty
-  // transaction instead of the new one carrying data ("trailing by one").
-  if (interruptPinInitialized && !pending) {
-    return;
-  }
-
   memset(spiRxBuf, 0, spiBufLen);
   memset(spiTxBuf, 0, spiBufLen);
 
-  bool sentThisTransaction = false;
-  if (pending && !msgSnapshot.isEmpty()) {
-    uint8_t len = msgSnapshot.length();
-    if (len > spiBufLen - 1) {
-      len = spiBufLen - 1;
-    }
+  bool willSend = pending && !msgSnapshot.isEmpty();
+  if (willSend) {
+    uint8_t len = (uint8_t)min((int)msgSnapshot.length(), spiBufLen - 1);
     spiTxBuf[0] = len;
     memcpy(&spiTxBuf[1], msgSnapshot.c_str(), len);
-    sentThisTransaction = true;
   }
 
   spi_slave_transaction_t t = {};
@@ -471,50 +706,56 @@ void InputronicBridge::handleSpiTransaction() {
   t.rx_buffer = spiRxBuf;
   t.tx_buffer = spiTxBuf;
 
-  // Pulse interrupt before blocking so master knows to initiate a transfer.
-  // The slave enters spi_slave_transmit within microseconds of the pulse,
-  // well before the master can respond.
-  if (sentThisTransaction) {
+  if (willSend) {
     pulseInterruptPin();
   }
 
-  esp_err_t err = spi_slave_transmit(spiHost, &t, pdMS_TO_TICKS(10));
-  if (err == ESP_ERR_TIMEOUT) {
+  // pdMS_TO_TICKS(50) is always >= 1 tick even at 100 Hz FreeRTOS (50/10 = 5).
+  // This blocks and suspends the task so the scheduler runs other work.
+  esp_err_t err = spi_slave_transmit(spiHost, &t, pdMS_TO_TICKS(50));
+  if (err != ESP_OK) {
     return;
   }
-  if (err == ESP_OK) {
-    String received = extractSpiCommand(spiRxBuf, spiBufLen);
-    if (received.length() > 0) {
+
+  String received = extractSpiCommand(spiRxBuf, spiBufLen);
+  if (msgMutex && xSemaphoreTake(msgMutex, pdMS_TO_TICKS(5)) == pdTRUE) {
+    if (received == "PING") {
+      lastSpiMsg = "TS;PONG;TE";
+      spiMsgPending = true;
+    } else if (received == "ACK") {
+      lastSpiMsg.clear();
+      spiMsgPending = false;
+    } else if (received == "REQ:DESC") {
+      lastSpiMsg = buildDescriptorMessage();
+      spiMsgPending = true;
+    } else if (received == "REQ:HIDRAW") {
+      String hidMsg = buildHidRawMessage();
+      if (!hidMsg.isEmpty()) {
+        lastSpiMsg = hidMsg;
+        spiMsgPending = true;
+      }
+    }
+    xSemaphoreGive(msgMutex);
+  }
+
+  if (willSend) {
+    bool sentPong = (msgSnapshot == "TS;PONG;TE");
+    if (!sentPong) {
       if (msgMutex && xSemaphoreTake(msgMutex, pdMS_TO_TICKS(5)) == pdTRUE) {
-        if (received == "PING") {
-          lastSpiMsg = "TS;PONG;TE";
-          spiMsgPending = true;
-        } else if (received == "REQ:DESC") {
-          lastSpiMsg = buildDescriptorMessage();
-          spiMsgPending = true;
-        } else if (received == "REQ:HIDRAW") {
-          String hidMsg = buildHidRawMessage();
-          if (!hidMsg.isEmpty()) {
-            lastSpiMsg = hidMsg;
-            spiMsgPending = true;
-          }
-        } else if (received == "ACK") {
-          lastSpiMsg.clear();
-          spiMsgPending = false;
-        }
+        spiMsgPending = false;
+        lastSpiMsg.clear();
         xSemaphoreGive(msgMutex);
       }
     }
   }
-  if (sentThisTransaction) {
-    if (msgMutex && xSemaphoreTake(msgMutex, pdMS_TO_TICKS(5)) == pdTRUE) {
-      spiMsgPending = false;
-      lastSpiMsg.clear();
-      xSemaphoreGive(msgMutex);
-    }
-  }
 }
 
+/**
+ * @brief                   showConfigDescFull function walks every descriptor
+ *                          in the USB configuration descriptor and dispatches
+ *                          each one to the appropriate show_*_desc logger and
+ *                          to checkInterfaceDescMidi / prepareEndpoints.
+ */
 void InputronicBridge::showConfigDescFull(const usb_config_desc_t *configDesc) {
   const uint8_t *p = &configDesc->val[0];
   uint8_t bLength;
@@ -554,6 +795,12 @@ void InputronicBridge::showConfigDescFull(const usb_config_desc_t *configDesc) {
   }
 }
 
+/**
+ * @brief                   handleHotplug function polls the USB device address
+ *                          list every 100 ms. On connect it boosts the CPU to
+ *                          240 MHz; on disconnect it drops to 80 MHz and calls
+ *                          resetUsbHost to re-enumerate the next device.
+ */
 void InputronicBridge::handleHotplug() {
   TickType_t now = xTaskGetTickCount();
   if (now - lastHotplugCheck < pdMS_TO_TICKS(100)) {
@@ -577,6 +824,12 @@ void InputronicBridge::handleHotplug() {
   }
 }
 
+/**
+ * @brief                   resetUsbHost function tears down the active USB host
+ *                          client, frees MIDI transfers, and calls
+ *                          EspUsbHost::begin() to reinitialise the stack so the
+ *                          next device plugged in is enumerated cleanly.
+ */
 void InputronicBridge::resetUsbHost() {
   freeMidiTransfers();
 
@@ -606,6 +859,11 @@ void InputronicBridge::resetUsbHost() {
   }
 }
 
+/**
+ * @brief                   freeMidiTransfers function releases all USB host
+ *                          transfer objects allocated for MIDI IN and OUT
+ *                          endpoints, setting all pointers to nullptr.
+ */
 void InputronicBridge::freeMidiTransfers() {
   for (int i = 0; i < static_cast<int>(midiInBuffers); i++) {
     if (midiIn[i]) {

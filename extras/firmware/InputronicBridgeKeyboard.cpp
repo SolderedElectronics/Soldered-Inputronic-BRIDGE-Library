@@ -1,5 +1,26 @@
+/**
+ **************************************************
+ *
+ * @file        InputronicBridgeKeyboard.cpp
+ * @brief       Keyboard HID event handling for the Inputronic BRIDGE firmware.
+ *              Receives USB HID keyboard reports from EspUsbHost, converts
+ *              newly pressed keycodes and modifiers to a human-readable token
+ *              string, and routes the result to the active transport.
+ *
+ *
+ * @copyright GNU General Public License v3.0
+ * @authors   Josip Šimun Kuči @ soldered.com
+ ***************************************************/
+
 #include "InputronicBridge.h"
 
+/**
+ * @brief                   onKeyboard function handles boot-protocol keyboard
+ *                          reports. It compares the current report against the
+ *                          previous one, builds a payload string of newly
+ *                          pressed keys (printable ASCII or named tokens such
+ *                          as <ENTER>, <F1>), and sends it if non-empty.
+ */
 void InputronicBridge::onKeyboard(hid_keyboard_report_t report, hid_keyboard_report_t lastReport) {
   auto appendToken = [&](const char *token) {
     latestReports.keyboard.payload += token;
@@ -98,9 +119,18 @@ void InputronicBridge::onKeyboard(hid_keyboard_report_t report, hid_keyboard_rep
   }
 }
 
+/**
+ * @brief                   onKeyboardKey function is the per-key callback from
+ *                          EspUsbHost. Not used; key decoding is done entirely
+ *                          inside onKeyboard using the full report pair.
+ */
 void InputronicBridge::onKeyboardKey(uint8_t /*ascii*/, uint8_t /*keycode*/, uint8_t /*modifier*/) {
 }
 
+/**
+ * @brief                   sendKeyboardReport function dispatches the current
+ *                          keyboard payload to whichever transport is active.
+ */
 void InputronicBridge::sendKeyboardReport() {
   switch (currentProtocol) {
     case protocolUart: sendKeyboardUart(); break;
@@ -109,6 +139,12 @@ void InputronicBridge::sendKeyboardReport() {
   }
 }
 
+/**
+ * @brief                   sendKeyboardUart function formats the current
+ *                          keyboard payload as a TS;K;...;TE frame (with
+ *                          semicolons inside the payload escaped as \;),
+ *                          transmits it over UART, and pulses the interrupt pin.
+ */
 void InputronicBridge::sendKeyboardUart() {
   static char txBuf[128];
   // Semicolons inside the payload are escaped to avoid corrupting packet framing.
@@ -120,6 +156,13 @@ void InputronicBridge::sendKeyboardUart() {
   pulseInterruptPin();
 }
 
+/**
+ * @brief                   sendKeyboardI2c function formats the current
+ *                          keyboard payload as a TS;K;...;TE frame and enqueues
+ *                          it on the I2C Channel A queue as a critical entry
+ *                          so it is never coalesced or discarded by mouse
+ *                          movement updates.
+ */
 void InputronicBridge::sendKeyboardI2c() {
   static char txBuf[128];
   // Semicolons inside the payload are escaped to avoid corrupting packet framing.
@@ -127,13 +170,16 @@ void InputronicBridge::sendKeyboardI2c() {
   escaped.replace(";", "\\;");
   snprintf(txBuf, sizeof(txBuf), "TS;K;%s;TE", escaped.c_str());
   if (msgMutex && xSemaphoreTake(msgMutex, pdMS_TO_TICKS(5)) == pdTRUE) {
-    lastI2cMsg = String(txBuf);
-    i2cMsgPending = true;
-    if (!i2cSentHidRaw) i2cMsgSent = false;
+    enqueueI2cChannelAMessageLocked(String(txBuf), false);
     xSemaphoreGive(msgMutex);
   }
 }
 
+/**
+ * @brief                   sendKeyboardSpi function formats the current
+ *                          keyboard payload as a TS;K;...;TE frame and stores
+ *                          it as the next SPI outbound message.
+ */
 void InputronicBridge::sendKeyboardSpi() {
   static char txBuf[128];
   // Semicolons inside the payload are escaped to avoid corrupting packet framing.
