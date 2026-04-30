@@ -64,8 +64,8 @@ bool InputronicParser::begin(CommProtocol p, TwoWire &wire, bool enableInterrupt
 /**
  * @brief                   Initialise SPI mode.
  */
-bool InputronicParser::begin(CommProtocol p, SPIClass &spi, uint8_t spiCs, uint32_t spiHz,
-                             bool enableInterruptParam, int8_t interruptPinParam, bool activeHigh)
+bool InputronicParser::begin(CommProtocol p, SPIClass &spi, uint8_t spiCs, uint32_t spiHz, bool enableInterruptParam,
+                             int8_t interruptPinParam, bool activeHigh)
 {
     protocol = p;
     spiPort = &spi;
@@ -137,9 +137,7 @@ void InputronicParser::setInterruptMode(bool enable, int8_t pin, bool activeHigh
         {
             interruptPin = pin;
             pinMode(pin, INPUT);
-            attachInterrupt(digitalPinToInterrupt(pin),
-                            isrHandler,
-                            activeHigh ? RISING : FALLING);
+            attachInterrupt(digitalPinToInterrupt(pin), isrHandler, activeHigh ? RISING : FALLING);
         }
     }
     else
@@ -166,59 +164,58 @@ bool InputronicParser::checkConnection()
 {
     switch (protocol)
     {
-        case PROTOCOL_I2C:
+    case PROTOCOL_I2C: {
+        if (!i2cPort)
         {
-            if (!i2cPort)
+            return false;
+        }
+        for (int attempt = 0; attempt < 10; attempt++)
+        {
+            i2cPort->beginTransmission(i2cSlaveAddr);
+            i2cPort->write((const uint8_t *)"PING", 4);
+            if (i2cPort->endTransmission() != 0)
             {
-                return false;
+                delay(50);
+                continue;
             }
             for (int attempt = 0; attempt < 10; attempt++)
             {
-                i2cPort->beginTransmission(i2cSlaveAddr);
-                i2cPort->write((const uint8_t *)"PING", 4);
-                if (i2cPort->endTransmission() != 0)
+                delay(5);
+                i2cPort->requestFrom(i2cSlaveAddr, (uint8_t)48);
+                uint8_t rawBuf[48] = {0};
+                uint8_t rawLen = 0;
+                while (i2cPort->available() && rawLen < 48)
                 {
-                    delay(50);
-                    continue;
+                    rawBuf[rawLen++] = i2cPort->read();
                 }
-                uint32_t deadline = millis() + 50;
-                while (millis() < deadline)
+                if (rawLen > 1)
                 {
-                    delay(5);
-                    i2cPort->requestFrom(i2cSlaveAddr, (uint8_t)48);
-                    uint8_t rawBuf[48] = {0};
-                    uint8_t rawLen = 0;
-                    while (i2cPort->available() && rawLen < 48)
+                    uint8_t payloadLen = rawBuf[0];
+                    if (payloadLen > 0 && payloadLen < 48 && payloadLen <= (rawLen - 1))
                     {
-                        rawBuf[rawLen++] = i2cPort->read();
-                    }
-                    if (rawLen > 1)
-                    {
-                        uint8_t payloadLen = rawBuf[0];
-                        if (payloadLen > 0 && payloadLen < 48 && payloadLen <= (rawLen - 1))
+                        String msg;
+                        msg.reserve(payloadLen);
+                        for (uint8_t i = 1; i <= payloadLen; i++)
                         {
-                            String msg;
-                            msg.reserve(payloadLen);
-                            for (uint8_t i = 1; i <= payloadLen; i++)
-                            {
-                                msg += (char)rawBuf[i];
-                            }
-                            msg.trim();
-                            if (msg == "TS;PONG;TE")
-                            {
-                                i2cPort->beginTransmission(i2cSlaveAddr);
-                                i2cPort->write((const uint8_t *)"ACK", 3);
-                                i2cPort->endTransmission();
-                                return true;
-                            }
+                            msg += (char)rawBuf[i];
+                        }
+                        msg.trim();
+                        if (msg == "TS;PONG;TE")
+                        {
+                            i2cPort->beginTransmission(i2cSlaveAddr);
+                            i2cPort->write((const uint8_t *)"ACK", 3);
+                            i2cPort->endTransmission();
+                            return true;
                         }
                     }
                 }
             }
-            return false;
         }
+        return false;
+    }
 
-        case PROTOCOL_SPI:
+    case PROTOCOL_SPI: {
+        if (!spiPort)
         {
             if (!spiPort)
             {
@@ -280,30 +277,75 @@ bool InputronicParser::checkConnection()
             }
             return false;
         }
+        uint8_t txBuf[SPI_MAX_LEN] = {0};
+        uint8_t rxBuf[SPI_MAX_LEN] = {0};
 
-        case PROTOCOL_UART:
+        // Transaction 1: send PING
+        memcpy(txBuf, "PING", 4);
+        spiPort->beginTransaction(spiSettings);
+        digitalWrite(spiCsPin, LOW);
+        spiPort->transferBytes(txBuf, rxBuf, SPI_MAX_LEN);
+        digitalWrite(spiCsPin, HIGH);
+        spiPort->endTransaction();
+
+        // Give firmware time to process PING and queue PONG
+        delay(50);
+
+        // Transaction 2: read PONG
+        memset(txBuf, 0, SPI_MAX_LEN);
+        memset(rxBuf, 0, SPI_MAX_LEN);
+        spiPort->beginTransaction(spiSettings);
+        digitalWrite(spiCsPin, LOW);
+        spiPort->transferBytes(txBuf, rxBuf, SPI_MAX_LEN);
+        digitalWrite(spiCsPin, HIGH);
+        spiPort->endTransaction();
+
+        uint8_t payloadLen = rxBuf[0];
+        if (payloadLen > 0 && payloadLen < SPI_MAX_LEN)
         {
-            if (!uartPort)
+            String msg;
+            msg.reserve(payloadLen);
+            for (uint8_t i = 0; i < payloadLen; i++)
             {
-                return false;
+                msg += (char)rxBuf[i + 1];
             }
-            uartPort->print("PING\n");
-            uint32_t deadline = millis() + 500;
-            String buf;
-            while (millis() < deadline)
+            if (msg == "TS;PONG;TE")
             {
-                while (uartPort->available())
-                {
-                    buf += (char)uartPort->read();
-                }
-                if (buf.indexOf("TS;PONG;TE") >= 0)
-                {
-                    return true;
-                }
-                delay(10);
+                memset(txBuf, 0, SPI_MAX_LEN);
+                memcpy(txBuf, "ACK", 3);
+                spiPort->beginTransaction(spiSettings);
+                digitalWrite(spiCsPin, LOW);
+                spiPort->transferBytes(txBuf, rxBuf, SPI_MAX_LEN);
+                digitalWrite(spiCsPin, HIGH);
+                spiPort->endTransaction();
+                return true;
             }
+        }
+        return false;
+    }
+
+    case PROTOCOL_UART: {
+        if (!uartPort)
+        {
             return false;
         }
+        uartPort->print("PING\n");
+        uint32_t deadline = millis() + 500;
+        String buf;
+        while (millis() < deadline)
+        {
+            while (uartPort->available())
+            {
+                buf += (char)uartPort->read();
+            }
+            if (buf.indexOf("TS;PONG;TE") >= 0)
+            {
+                return true;
+            }
+            delay(10);
+        }
+        return false;
+    }
     }
     return false;
 }
@@ -322,7 +364,8 @@ InputronicParser::EventBundle InputronicParser::pollEvents()
 
         noInterrupts();
         bool flagWasSet = interruptFlag;
-        if (flagWasSet) interruptFlag = false;
+        if (flagWasSet)
+            interruptFlag = false;
         interrupts();
 
         if (enableInterrupt && !flagWasSet)
@@ -372,7 +415,8 @@ InputronicParser::EventBundle InputronicParser::pollEvents()
 
         noInterrupts();
         bool flagWasSet = interruptFlag;
-        if (flagWasSet) interruptFlag = false;
+        if (flagWasSet)
+            interruptFlag = false;
         interrupts();
 
         if (enableInterrupt && !flagWasSet && !requestDescPending && !requestHidRawPending)
@@ -449,7 +493,8 @@ InputronicParser::EventBundle InputronicParser::pollEvents()
     {
         noInterrupts();
         bool flagWasSet = interruptFlag;
-        if (flagWasSet) interruptFlag = false;
+        if (flagWasSet)
+            interruptFlag = false;
         interrupts();
 
         if (enableInterrupt && !flagWasSet && !requestDescPending && !requestHidRawPending)
