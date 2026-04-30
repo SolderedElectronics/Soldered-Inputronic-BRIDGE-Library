@@ -593,7 +593,7 @@ void InputronicParser::pollSpi()
         }
         spiPendingAck = true;
     }
-        
+
     if (msg.length() > 0)
     {
         static String spiBuffer = "";
