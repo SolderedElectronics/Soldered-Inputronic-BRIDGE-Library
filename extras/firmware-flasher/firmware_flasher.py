@@ -308,12 +308,12 @@ class FirmwareFlasher(ctk.CTk):
 
         baud = self._baud_var.get()
         args = [
-            "--chip", "esp32c6",
+            "--chip", "esp32s3",
             "--port", port,
             "--baud", baud,
-            "--before", "default_reset",
-            "--after", "hard_reset",
-            "write_flash",
+            "--before", "default-reset",
+            "--after", "hard-reset",
+            "write-flash",
             "-z",
             FLASH_ADDRESS, str(self._selected_bin),
         ]
