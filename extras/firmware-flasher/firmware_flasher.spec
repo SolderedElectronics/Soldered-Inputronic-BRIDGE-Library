@@ -1,4 +1,5 @@
 # -*- mode: python ; coding: utf-8 -*-
+from PyInstaller.utils.hooks import collect_data_files
 
 a = Analysis(
     ['firmware_flasher.py'],
@@ -6,6 +7,7 @@ a = Analysis(
     binaries=[],
     datas=[
         ('../firmware_binaries/*.bin', 'firmware_binaries'),
+        *collect_data_files('esptool'),
     ],
     hiddenimports=[
         'esptool',
