@@ -19,6 +19,7 @@
 #include "driver/spi_slave.h"
 #include <usb/usb_host.h>
 #include <freertos/semphr.h>
+#include <Preferences.h>
 #include <map>
 #include <queue>
 #include <deque>
@@ -141,7 +142,8 @@ public:
   void updateLastHidRaw(uint8_t *data, size_t len);
 
 private:
-  static constexpr uint8_t i2cSlaveAddr = 0x50;
+  static constexpr uint8_t i2cDefaultAddr = 0x50;
+  uint8_t i2cSlaveAddr = i2cDefaultAddr;
   static constexpr gpio_num_t i2cSda = GPIO_NUM_8;
   static constexpr gpio_num_t i2cScl = GPIO_NUM_9;
   static constexpr i2c_port_t i2cPort = I2C_NUM_0;
@@ -225,12 +227,23 @@ private:
   static bool spiMsgPending;
 
   SemaphoreHandle_t msgMutex = nullptr;
+  Preferences prefs;
 
   /**
    * @brief       initI2cSlave function configures the ESP32 I2C slave driver
-   *              on the pins and address defined by the compile-time constants.
+   *              on the pins and address stored in i2cSlaveAddr.
    */
   void initI2cSlave();
+
+  /**
+   * @brief       applyI2cAddressChange function validates newAddr, persists it
+   *              to NVS, updates i2cSlaveAddr, and reinitialises the I2C slave
+   *              driver so the new address takes effect immediately.
+   *
+   * @param       uint8_t newAddr
+   *              7-bit I2C address (0x08–0x77).
+   */
+  void applyI2cAddressChange(uint8_t newAddr);
 
   /**
    * @brief       initSpiSlave function configures the ESP32 SPI slave driver

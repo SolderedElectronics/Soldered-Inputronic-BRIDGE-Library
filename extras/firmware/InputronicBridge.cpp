@@ -40,6 +40,11 @@ void InputronicBridge::begin() {
     msgMutex = xSemaphoreCreateMutex();
   }
 
+  prefs.begin("inputronic", true);
+  i2cSlaveAddr = prefs.getUChar("i2c_addr", i2cDefaultAddr);
+  prefs.end();
+  Serial.printf("[INIT] I2C address: 0x%02X\n", i2cSlaveAddr);
+
   gpio_set_direction(jumperPin0, GPIO_MODE_INPUT);
   gpio_set_pull_mode(jumperPin0, GPIO_PULLDOWN_ONLY);
   gpio_set_direction(jumperPin1, GPIO_MODE_INPUT);
@@ -111,6 +116,10 @@ void InputronicBridge::task() {
         if (uartRxBuf == "PING") {
           Serial.print("TS;PONG;TE\n");
           pulseInterruptPin();
+        } else if (uartRxBuf.startsWith("SET:ADDR:")) {
+          String hexStr = uartRxBuf.substring(9, 11);
+          uint8_t newAddr = (uint8_t)strtol(hexStr.c_str(), nullptr, 16);
+          applyI2cAddressChange(newAddr);
         }
         uartRxBuf = "";
       } else {
@@ -533,6 +542,12 @@ void InputronicBridge::handleI2cTransaction() {
       }
       xSemaphoreGive(msgMutex);
     }
+    int addrCmdPos = received.indexOf("SET:ADDR:");
+    if (addrCmdPos >= 0) {
+      String hexStr = received.substring(addrCmdPos + 9, addrCmdPos + 11);
+      uint8_t newAddr = (uint8_t)strtol(hexStr.c_str(), nullptr, 16);
+      applyI2cAddressChange(newAddr);
+    }
   }
 
   bool pending = false;
@@ -734,6 +749,12 @@ void InputronicBridge::handleSpiTransaction() {
         lastSpiMsg = hidMsg;
         spiMsgPending = true;
       }
+    } else if (received.startsWith("SET:ADDR:")) {
+      xSemaphoreGive(msgMutex);
+      String hexStr = received.substring(9, 11);
+      uint8_t newAddr = (uint8_t)strtol(hexStr.c_str(), nullptr, 16);
+      applyI2cAddressChange(newAddr);
+      return;
     }
     xSemaphoreGive(msgMutex);
   }
@@ -875,4 +896,30 @@ void InputronicBridge::freeMidiTransfers() {
     usb_host_transfer_free(midiOut);
     midiOut = nullptr;
   }
+}
+
+/**
+ * @brief                   applyI2cAddressChange function validates newAddr
+ *                          (must be a legal 7-bit I2C address: 0x08–0x77),
+ *                          persists it to NVS, updates i2cSlaveAddr, and
+ *                          reinitialises the I2C slave driver so the new
+ *                          address takes effect immediately without a reboot.
+ */
+void InputronicBridge::applyI2cAddressChange(uint8_t newAddr) {
+  if (newAddr < 0x08 || newAddr > 0x77) {
+    Serial.printf("[I2C] Rejected invalid address 0x%02X\n", newAddr);
+    return;
+  }
+  prefs.begin("inputronic", false);
+  prefs.putUChar("i2c_addr", newAddr);
+  prefs.end();
+
+  Serial.printf("[I2C] Address changed to 0x%02X\n", newAddr);
+  i2cSlaveAddr = newAddr;
+
+  if (i2cInitialized) {
+    i2c_driver_delete(i2cPort);
+    i2cInitialized = false;
+  }
+  initI2cSlave();
 }

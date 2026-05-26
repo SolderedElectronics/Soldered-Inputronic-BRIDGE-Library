@@ -1,0 +1,90 @@
+name: Build Firmware Flasher
+
+on:
+  push:
+    branches:
+      - dev
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            artifact_name: firmware_flasher
+            asset_name: firmware_flasher-linux
+          - os: macos-latest
+            artifact_name: firmware_flasher
+            asset_name: firmware_flasher-macos
+          - os: windows-latest
+            artifact_name: firmware_flasher.exe
+            asset_name: firmware_flasher-windows.exe
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install tkinter (Linux only)
+        if: runner.os == 'Linux'
+        run: sudo apt-get install -y python3-tk
+
+      - name: Install dependencies
+        run: pip install -r extras/firmware-flasher/requirements.txt pyinstaller
+
+      - name: Build with PyInstaller
+        working-directory: extras/firmware-flasher
+        run: pyinstaller firmware_flasher.spec
+
+      - name: Rename artifact
+        shell: bash
+        run: mv extras/firmware-flasher/dist/${{ matrix.artifact_name }} extras/firmware-flasher/dist/${{ matrix.asset_name }}
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset_name }}
+          path: extras/firmware-flasher/dist/${{ matrix.asset_name }}
+          retention-days: 1
+
+  commit:
+    needs: build
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: dev
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: extras/firmware-flasher/dist/
+
+      - name: Move executables to extras/
+        shell: bash
+        run: |
+          mkdir -p extras/firmware-flasher/bin
+          # Each artifact is in its own subdirectory from download-artifact
+          find extras/firmware-flasher/dist -type f | while read f; do
+            cp "$f" extras/firmware-flasher/bin/
+          done
+
+      - name: Commit executables
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add extras/firmware-flasher/bin/
+          git diff --staged --quiet && echo "No changes to commit" && exit 0
+          git commit -m "ci: update firmware flasher executables [skip ci]"
+          git push

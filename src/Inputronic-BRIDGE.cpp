@@ -99,6 +99,46 @@ void InputronicParser::configureI2c(uint8_t addr)
 }
 
 /**
+ * @brief                   Send SET:ADDR command to bridge and update local address.
+ */
+bool InputronicParser::changeI2CAddress(uint8_t newAddr)
+{
+    char cmd[12];
+    snprintf(cmd, sizeof(cmd), "SET:ADDR:%02X", newAddr);
+
+    bool sent = false;
+    if (protocol == PROTOCOL_I2C)
+    {
+        if (!i2cPort)
+        {
+            return false;
+        }
+        sendI2cCommand(cmd);
+        // Give the bridge time to reinitialise its I2C slave before the next
+        // transaction arrives at the new address.
+        delay(50);
+        i2cSlaveAddr = newAddr;
+        sent = true;
+    }
+    else if (protocol == PROTOCOL_SPI)
+    {
+        sendSpiCommand(cmd);
+        sent = true;
+    }
+    else if (protocol == PROTOCOL_UART)
+    {
+        if (!uartPort)
+        {
+            return false;
+        }
+        uartPort->print(cmd);
+        uartPort->print('\n');
+        sent = true;
+    }
+    return sent;
+}
+
+/**
  * @brief                   Request device descriptor on next poll.
  */
 void InputronicParser::requestDescriptor()
