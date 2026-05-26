@@ -14,6 +14,7 @@ var class_inputronic_parser =
     [ "begin", "class_inputronic_parser.html#a8abd672ebb55e9ea0d5511da6381bc6b", null ],
     [ "begin", "class_inputronic_parser.html#aa00ed8dac7adef51c14eee7b19674e34", null ],
     [ "begin", "class_inputronic_parser.html#afd0d40c18a0b62d33e41e4e36258f6d5", null ],
+    [ "changeI2CAddress", "class_inputronic_parser.html#acb90300c0a0a289e51f504d6e2961518", null ],
     [ "checkConnection", "class_inputronic_parser.html#aca42ef80acd63b62dae5b7b830fc3764", null ],
     [ "configureI2c", "class_inputronic_parser.html#af2b90698318e0461bbb280b05b1977ee", null ],
     [ "configureInterrupt", "class_inputronic_parser.html#a6b5d9f886c595b5a011707c6802c2ca5", null ],

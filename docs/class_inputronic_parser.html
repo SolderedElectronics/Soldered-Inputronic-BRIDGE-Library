@@ -124,6 +124,8 @@ Public Member Functions</h2></td></tr>
 <tr class="memdesc:aa00ed8dac7adef51c14eee7b19674e34"><td class="mdescLeft">&#160;</td><td class="mdescRight">Initialise SPI mode and verify the bridge is present.  <br /></td></tr>
 <tr class="memitem:a8abd672ebb55e9ea0d5511da6381bc6b" id="r_a8abd672ebb55e9ea0d5511da6381bc6b"><td class="memItemLeft">bool&#160;</td><td class="memItemRight"><a class="el" href="#a8abd672ebb55e9ea0d5511da6381bc6b">begin</a> (<a class="el" href="#aefcb694b40f73a7aaee49db8a4c36900">CommProtocol</a> p, HardwareSerial &amp;serial, bool enableInterruptParam=false, int8_t interruptPinParam=-1, bool activeHigh=true)</td></tr>
 <tr class="memdesc:a8abd672ebb55e9ea0d5511da6381bc6b"><td class="mdescLeft">&#160;</td><td class="mdescRight">Initialise UART mode and verify the bridge is present.  <br /></td></tr>
+<tr class="memitem:acb90300c0a0a289e51f504d6e2961518" id="r_acb90300c0a0a289e51f504d6e2961518"><td class="memItemLeft">bool&#160;</td><td class="memItemRight"><a class="el" href="#acb90300c0a0a289e51f504d6e2961518">changeI2CAddress</a> (uint8_t newAddr)</td></tr>
+<tr class="memdesc:acb90300c0a0a289e51f504d6e2961518"><td class="mdescLeft">&#160;</td><td class="mdescRight">Send a SET:ADDR command to the bridge, which writes the new address to its EEPROM (NVS) and reinitialises the I2C slave driver immediately. Also updates the local i2cSlaveAddr so subsequent I2C transactions use the new address.  <br /></td></tr>
 <tr class="memitem:a06d6f10684017a81ad0dacc4c78ddf4f" id="r_a06d6f10684017a81ad0dacc4c78ddf4f"><td class="memItemLeft">void&#160;</td><td class="memItemRight"><a class="el" href="#a06d6f10684017a81ad0dacc4c78ddf4f">requestDescriptor</a> ()</td></tr>
 <tr class="memdesc:a06d6f10684017a81ad0dacc4c78ddf4f"><td class="mdescLeft">&#160;</td><td class="mdescRight">Request device descriptor on next poll.  <br /></td></tr>
 <tr class="memitem:ac67b22f778d96f03a3d37781c789c0a5" id="r_ac67b22f778d96f03a3d37781c789c0a5"><td class="memItemLeft">void&#160;</td><td class="memItemRight"><a class="el" href="#ac67b22f778d96f03a3d37781c789c0a5">requestHidRawOnce</a> ()</td></tr>
@@ -383,6 +385,35 @@ false No response within timeout. </dd></dl>
 <dl class="section return"><dt>Returns</dt><dd>true Bridge responded to PING. </dd>
 <dd>
 false No response within timeout (bridge not connected or not ready). </dd></dl>
+
+</div>
+</div>
+<a id="acb90300c0a0a289e51f504d6e2961518" name="acb90300c0a0a289e51f504d6e2961518"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#acb90300c0a0a289e51f504d6e2961518">&#9670;&#160;</a></span>changeI2CAddress()</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">bool InputronicParser::changeI2CAddress </td>
+          <td>(</td>
+          <td class="paramtype">uint8_t</td>          <td class="paramname"><span class="paramname"><em>newAddr</em></span></td><td>)</td>
+          <td></td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+<p>Send a SET:ADDR command to the bridge, which writes the new address to its EEPROM (NVS) and reinitialises the I2C slave driver immediately. Also updates the local i2cSlaveAddr so subsequent I2C transactions use the new address. </p>
+<p>Send SET:ADDR command to bridge and update local address.</p>
+<dl class="params"><dt>Parameters</dt><dd>
+  <table class="params">
+    <tr><td class="paramname">newAddr</td><td>New 7-bit I2C address (0x08–0x77). </td></tr>
+  </table>
+  </dd>
+</dl>
+<dl class="section return"><dt>Returns</dt><dd>true Command sent successfully. </dd>
+<dd>
+false Protocol not initialised or port unavailable. </dd></dl>
 
 </div>
 </div>
