@@ -120,6 +120,18 @@ class InputronicParser
     bool begin(CommProtocol p, HardwareSerial &serial, bool enableInterruptParam = false, int8_t interruptPinParam = -1,
                bool activeHigh = true);
 
+    /**
+     * @brief Send a SET:ADDR command to the bridge, which writes the new
+     *        address to its EEPROM (NVS) and reinitialises the I2C slave
+     *        driver immediately. Also updates the local i2cSlaveAddr so
+     *        subsequent I2C transactions use the new address.
+     *
+     * @param newAddr  New 7-bit I2C address (0x08–0x77).
+     * @return true    Command sent successfully.
+     * @return false   Protocol not initialised or port unavailable.
+     */
+    bool changeI2CAddress(uint8_t newAddr);
+
     void requestDescriptor();
     void requestHidRawOnce();
     void setHidRawPolling(bool enabled);
