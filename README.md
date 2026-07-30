@@ -1,7 +1,6 @@
 # Soldered Inputronic BRIDGE Arduino library
 
 [![Make docs and publish to GitHub Pages](https://github.com/SolderedElectronics/Soldered-Inputronic-BRIDGE-Library/actions/workflows/make_docs.yml/badge.svg?branch=dev)](https://github.com/SolderedElectronics/Soldered-Inputronic-BRIDGE-Library/actions/workflows/make_docs.yml)
-[![Arduino Library Manager Compatibility](https://github.com/SolderedElectronics/Soldered-Inputronic-BRIDGE-Library/actions/workflows/arduino_lint.yml/badge.svg?branch=dev)](https://github.com/SolderedElectronics/Soldered-Inputronic-BRIDGE-Library/actions/workflows/arduino_lint.yml)
 
 | ![Product name](https://soldered.com/cdn/shop/files/333390_featured-photo_79e754_e227bf04-7da8-472b-98bb-fcad67e0f94f.png) |
 | :------------------------------------------------------------------------------------: |
