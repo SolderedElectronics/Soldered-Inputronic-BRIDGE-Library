@@ -1,13 +1,17 @@
-# NAZIV PROIZVODA Arduino library
+# Soldered Inputronic BRIDGE Arduino library
 
 [![Make docs and publish to GitHub Pages](https://github.com/SolderedElectronics/Soldered-Inputronic-BRIDGE-Library/actions/workflows/make_docs.yml/badge.svg?branch=dev)](https://github.com/SolderedElectronics/Soldered-Inputronic-BRIDGE-Library/actions/workflows/make_docs.yml)
 [![Arduino Library Manager Compatibility](https://github.com/SolderedElectronics/Soldered-Inputronic-BRIDGE-Library/actions/workflows/arduino_lint.yml/badge.svg?branch=dev)](https://github.com/SolderedElectronics/Soldered-Inputronic-BRIDGE-Library/actions/workflows/arduino_lint.yml)
 
-| ![Product name](https://upload.wikimedia.org/wikipedia/commons/8/8f/Example_image.svg) |
+| ![Product name](https://soldered.com/cdn/shop/files/333390_featured-photo_79e754_e227bf04-7da8-472b-98bb-fcad67e0f94f.png) |
 | :------------------------------------------------------------------------------------: |
-|                      [Soldered Inputronic BRIDGE](https://www.solde.red/SKU)                      |
+|                      [Soldered Inputronic BRIDGE](https://www.solde.red/333390)                      |
 
-OPIS PROIZVODA + LINK NA [easyC ecosystem](https://www.soldered.com/en/easyC).
+Inputronic BRIDGE is built around the ESP32-S3 and is designed for reading USB HID device data and forwarding it to your microcontroller. It's used to connect a USB keyboard, mouse, or MIDI controller to any project without implementing a USB host stack on your Arduino or ESP32 side. An onboard boost converter generates 5V for the USB-A port from the 3.3V supply, with overcurrent protection limiting the connected device to 260 mA.
+
+It communicates over I2C, UART, or SPI, selectable via onboard jumpers. The default I2C address is 0x50. Two Qwiic connectors allow tool-free I2C connection, and a 14-pin header exposes SPI, UART, I2C, interrupt, and reset pins. Events can be read by polling or via interrupt. We have made this board open-source, so all hardware design files are available for you to inspect or adapt. Our technical support is also there if you need help getting started.
+
+It works with the Arduino IDE using the Soldered Arduino library. At 26 x 63 mm, with two mounting holes for M3 screws, it fits easily into any build. Full setup and usage instructions are available in the Soldered documentation.
 
 ### Repository Contents
 
@@ -21,7 +25,7 @@ You can find hardware design for this board in Soldered Inputronic BRIDGE hardwa
 
 ### Documentation
 
-Access Arduino library documentation [here](https://SolderedElectronics.github.io/Soldered-Generic-Arduino-Library/).
+Access Arduino library documentation [here](https://docs.soldered.com/inputronic-bridge/overview/).
 
 - Tutorial for using the NAZIV PROIZVODA board
 - Installing an Arduino library
