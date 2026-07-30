@@ -25,7 +25,7 @@
 var NAVTREE =
 [
   [ "Soldered Inputronic BRIDGE Library", "index.html", [
-    [ "NAZIV PROIZVODA Arduino library", "index.html", "index" ],
+    [ "Soldered Inputronic BRIDGE Arduino library", "index.html", "index" ],
     [ "Classes", "annotated.html", [
       [ "Class List", "annotated.html", "annotated_dup" ],
       [ "Class Index", "classes.html", null ],
@@ -48,6 +48,6 @@ var NAVTREEINDEX =
 "_inputronic-_b_r_i_d_g_e_8cpp.html"
 ];
 
-var SYNCONMSG = 'click to disable panel synchronization';
-var SYNCOFFMSG = 'click to enable panel synchronization';
-var LISTOFALLMEMBERS = 'List of all members';
+const SYNCONMSG = 'click to disable panel synchronization';
+const SYNCOFFMSG = 'click to enable panel synchronization';
+const LISTOFALLMEMBERS = 'List of all members';

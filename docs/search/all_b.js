@@ -1,4 +1,5 @@
 var searchData=
 [
-  ['naziv_20proizvoda_20arduino_20library_0',['NAZIV PROIZVODA Arduino library',['../index.html',1,'']]]
+  ['ondataready_0',['onDataReady',['../class_inputronic_parser.html#aa296a925a2590c5244904fb8a082159e',1,'InputronicParser']]],
+  ['open_20source_20license_1',['Open-source license',['../index.html#autotoc_md6',1,'']]]
 ];
